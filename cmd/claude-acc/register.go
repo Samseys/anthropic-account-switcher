@@ -111,6 +111,14 @@ func cmdUnregister(purge bool) error {
 		_ = removeUnixPath(dir)
 	}
 
+	// Clean up the install folder itself. The self-delete helper removes it
+	// once the locked binary is gone; here we cover the cases where the binary
+	// was deleted outright or was already absent. removeInstallDir only acts on
+	// the dedicated per-tool folder and only when it is empty.
+	if removedBinary || !scheduledDelete && !fileExists(dst) {
+		removeInstallDir(dir)
+	}
+
 	switch {
 	case removedBinary:
 		fmt.Printf("Unregistered '%s' (removed the installed binary and PATH entry).\n", bin)
@@ -137,6 +145,18 @@ func cmdUnregister(purge bool) error {
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
+}
+
+// removeInstallDir deletes the install folder, but only the dedicated per-tool
+// directory we create on Windows (%LOCALAPPDATA%\claude-acc). On Unix the
+// install dir is a shared location (~/.local/bin) that must never be removed.
+// os.Remove only deletes an empty directory, so a folder that still holds other
+// files is left intact.
+func removeInstallDir(dir string) {
+	if runtime.GOOS != "windows" || filepath.Base(dir) != bin {
+		return
+	}
+	_ = os.Remove(dir)
 }
 
 // ---- Unix PATH (a marked export block appended to the shell rc) ----
