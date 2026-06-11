@@ -1,55 +1,61 @@
 # claude-acc
 
-Switch between multiple Anthropic accounts in Claude Code — **no dependencies**.
-Just a script: PowerShell on Windows, bash on macOS/Linux. Nothing to install,
-no Node, no npm.
+Switch between multiple Anthropic accounts in Claude Code — a **single static
+binary**, no runtime dependencies. Nothing to install, no Node, no Python, no
+PowerShell modules.
 
 Useful when you juggle, say, a personal account and a work account and don't
 want to re-authenticate every time.
 
 ## Install
 
-Clone (or download) the repo — that's it:
+Download the binary for your platform from the
+[latest release](https://github.com/Samseys/anthropic-account-switcher/releases/latest),
+then put it on your PATH.
+
+| Platform        | Asset                              |
+| --------------- | ---------------------------------- |
+| Windows x64     | `claude-acc_windows_amd64.exe`     |
+| Windows ARM64   | `claude-acc_windows_arm64.exe`     |
+| macOS Intel     | `claude-acc_darwin_amd64`          |
+| macOS Apple Si. | `claude-acc_darwin_arm64`          |
+| Linux x64       | `claude-acc_linux_amd64`           |
+| Linux ARM64     | `claude-acc_linux_arm64`           |
+
+Verify the download against `SHA256SUMS` on the release if you like, then:
 
 ```bash
-git clone https://github.com/Samseys/anthropic-account-switcher.git
+# macOS / Linux
+mv claude-acc_darwin_arm64 claude-acc && chmod +x claude-acc
+./claude-acc register      # copy onto your PATH; open a new terminal
+
+# Windows (PowerShell)
+.\claude-acc_windows_amd64.exe register   # adds itself to your user PATH
 ```
 
-Then run the script for your OS directly, or add a short alias.
+`register` copies the binary to a per-user location and puts it on your `PATH`
+so `claude-acc` works in any shell:
 
-### Windows (PowerShell & cmd)
+- **Windows** — `%LOCALAPPDATA%\claude-acc\claude-acc.exe`, added to your user
+  `PATH`. Open a **new** terminal for the change to apply.
+- **macOS / Linux** — `~/.local/bin/claude-acc`, with a `PATH` line added to
+  your shell rc (`~/.zshrc`, `~/.bashrc`, or `~/.profile`) if needed.
 
-```powershell
-# run directly
-C:\path\to\anthropic-account-switcher\claude-acc.ps1 list
+`unregister` removes the installed copy and the `PATH` entry (add `--purge` to
+also delete saved profiles).
 
-# or register a `claude-acc` command (one time)
-C:\path\to\anthropic-account-switcher\claude-acc.ps1 register
-. $PROFILE   # reload PowerShell, or open a new terminal
-```
+### Build from source
 
-`register` wires up **both shells**:
-
-- **PowerShell** — adds a `claude-acc` function to your `$PROFILE`.
-- **cmd.exe** — creates a `claude-acc.cmd` shim next to the script and adds the
-  script's folder to your user `PATH`, so `claude-acc` works in Command Prompt
-  (and the Run dialog). Open a **new** cmd window for the PATH change to apply.
-
-`unregister` removes the function, the shim, and the PATH entry.
-
-If scripts are blocked, allow local scripts once:
-`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
-
-### macOS / Linux (bash)
+Needs Go 1.25+. The binary is pure Go (`CGO_ENABLED=0`), so one machine can
+build every platform:
 
 ```bash
-chmod +x claude-acc.sh
-./claude-acc.sh list
-
-# or register a `claude-acc` alias in your shell profile (one time)
-./claude-acc.sh register
-source ~/.bashrc   # or ~/.zshrc, or open a new terminal
+go build -o claude-acc .          # current platform
+go test ./...                     # run the splicer tests
+./build.ps1 -Version 4.0.0        # cross-compile all targets into .\dist
 ```
+
+Or `go install github.com/Samseys/anthropic-account-switcher@latest`.
 
 ## Usage
 
@@ -59,7 +65,7 @@ claude-acc list            # list saved profiles; * marks the active one
 claude-acc switch <name>   # switch to a profile, then restart Claude Code
 claude-acc current         # show the active account (email / org / plan)
 claude-acc remove <name>   # delete a saved profile
-claude-acc register        # wire up `claude-acc` for your shell (PowerShell + cmd on Windows)
+claude-acc register        # install onto your PATH for any shell
 claude-acc unregister      # remove it (--purge also deletes saved profiles)
 claude-acc help
 ```
@@ -98,18 +104,17 @@ the active credentials in memory.
 
 `~/.claude.json` can contain duplicate object keys (e.g. project paths that
 differ only in drive-letter case). A normal JSON parse-and-rewrite would either
-fail (PowerShell) or silently drop one of the duplicates (python/jq). So the
-identity patch surgically replaces *only* the `oauthAccount` and `userID`
-values with a string-aware scanner, leaving everything else byte-for-byte
-intact. This is verified lossless on real configs.
+fail or silently drop one of the duplicates. So the identity patch surgically
+replaces *only* the `oauthAccount` and `userID` values with a string-aware
+scanner, leaving everything else byte-for-byte intact. The scanner lives in
+[`internal/claudejson`](internal/claudejson) and is covered by tests.
 
 ## Requirements
 
-- **Windows**: nothing — Windows PowerShell 5.1 (built in) is enough.
-- **macOS / Linux**: `python3` is used for the identity patch. It ships with
-  macOS (via the Command Line Tools) and almost every Linux distro. Without it,
-  credentials still switch fine and Claude Code reconciles the displayed
-  identity from the new token on restart.
+- **At runtime**: nothing. The binary is self-contained. On macOS it calls the
+  built-in `security` CLI for the Keychain; on Windows `register` uses the
+  built-in `powershell` to edit your user PATH.
+- **To build**: Go 1.25+.
 
 ## Caveats
 

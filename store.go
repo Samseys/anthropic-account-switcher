@@ -1,0 +1,102 @@
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"os/exec"
+	"os/user"
+	"runtime"
+	"strings"
+)
+
+// Credential storage is OS-aware:
+//
+//	Windows / Linux : ~/.claude/.credentials.json, copied verbatim.
+//	macOS           : the login Keychain, via the built-in `security` CLI.
+//
+// We exec `security` rather than linking the Security framework so the binary
+// stays pure Go (CGO_ENABLED=0) and cross-compiles for every target from one
+// machine.
+
+const keychainServiceDefault = "Claude Code-credentials"
+
+func keychainService() string {
+	if v := os.Getenv("CLAUDE_KEYCHAIN_SERVICE"); v != "" {
+		return v
+	}
+	return keychainServiceDefault
+}
+
+func keychainAccount() string {
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		name := u.Username
+		if i := strings.LastIndexAny(name, `\/`); i >= 0 {
+			name = name[i+1:] // strip any DOMAIN\ prefix
+		}
+		return name
+	}
+	return os.Getenv("USER")
+}
+
+func keychainRead() ([]byte, bool) {
+	out, err := exec.Command("security", "find-generic-password",
+		"-a", keychainAccount(), "-s", keychainService(), "-w").Output()
+	if err != nil {
+		return nil, false
+	}
+	// `security -w` appends a trailing newline; drop it so round-trips match.
+	return bytes.TrimRight(out, "\r\n"), true
+}
+
+// useKeychain mirrors the precedence used by the original shell tool: on macOS,
+// prefer the Keychain when an item exists, fall back to the file if one is
+// present, otherwise default to the Keychain.
+func useKeychain() bool {
+	if runtime.GOOS != "darwin" {
+		return false
+	}
+	if _, ok := keychainRead(); ok {
+		return true
+	}
+	if _, err := os.Stat(credFile); err == nil {
+		return false
+	}
+	return true
+}
+
+// readCreds returns the live OAuth credential bytes, or an error explaining
+// that the user is not logged in.
+func readCreds() ([]byte, error) {
+	if useKeychain() {
+		if b, ok := keychainRead(); ok {
+			return b, nil
+		}
+		return nil, fmt.Errorf("no credentials in the Keychain (service %q); log in to Claude Code first", keychainService())
+	}
+	b, err := os.ReadFile(credFile)
+	if err != nil {
+		return nil, fmt.Errorf("no credentials at %s; log in to Claude Code first", credFile)
+	}
+	return b, nil
+}
+
+// tryReadCreds is the non-fatal variant used for active-profile detection.
+func tryReadCreds() ([]byte, bool) {
+	b, err := readCreds()
+	if err != nil {
+		return nil, false
+	}
+	return b, true
+}
+
+func writeCreds(data []byte) error {
+	if useKeychain() {
+		// -U updates the item if it already exists. The password is passed as
+		// an argument (briefly visible in the process list), matching the
+		// behaviour of the previous shell implementation.
+		return exec.Command("security", "add-generic-password", "-U",
+			"-a", keychainAccount(), "-s", keychainService(), "-w", string(data)).Run()
+	}
+	return writeFileAtomic(credFile, data, 0o600)
+}
