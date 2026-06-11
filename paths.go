@@ -6,21 +6,52 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"strings"
 )
 
 const bin = "claude-acc"
 
 // version is overridden at build time via -ldflags "-X main.version=...".
-var version = "1.0.0"
+var version string
 
+// versionString prefers the ldflags-injected version, then the module version
+// recorded by `go install module@vX.Y.Z`, then "dev" for plain local builds.
+func versionString() string {
+	if version != "" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if v := bi.Main.Version; v != "" && v != "(devel)" {
+			return strings.TrimPrefix(v, "v")
+		}
+	}
+	return "dev"
+}
+
+// Claude Code honors CLAUDE_CONFIG_DIR to relocate ~/.claude; when it is set,
+// ~/.claude.json moves inside that directory too.
 var (
 	home       = mustHome()
-	claudeDir  = filepath.Join(home, ".claude")
+	claudeDir  = defaultClaudeDir()
 	credFile   = filepath.Join(claudeDir, ".credentials.json")
-	configFile = filepath.Join(home, ".claude.json")
+	configFile = defaultConfigFile()
 	profileDir = filepath.Join(claudeDir, "account-profiles")
 )
+
+func defaultClaudeDir() string {
+	if v := os.Getenv("CLAUDE_CONFIG_DIR"); v != "" {
+		return v
+	}
+	return filepath.Join(home, ".claude")
+}
+
+func defaultConfigFile() string {
+	if v := os.Getenv("CLAUDE_CONFIG_DIR"); v != "" {
+		return filepath.Join(v, ".claude.json")
+	}
+	return filepath.Join(home, ".claude.json")
+}
 
 func mustHome() string {
 	h, err := os.UserHomeDir()

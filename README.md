@@ -61,14 +61,21 @@ Or `go install github.com/Samseys/anthropic-account-switcher@latest`.
 
 ```
 claude-acc save [name]     # save the current account (defaults to its email)
-claude-acc list            # list saved profiles; * marks the active one
-claude-acc switch <name>   # switch to a profile, then restart Claude Code
-claude-acc current         # show the active account (email / org / plan)
+claude-acc list [--json]   # list saved profiles; * marks the active one
+claude-acc switch [name|-] # switch to a profile, then restart Claude Code
+claude-acc current [--json]  # show the active account (profile/email/org/plan)
 claude-acc remove <name>   # delete a saved profile
+claude-acc rename <old> <new>  # rename a saved profile
 claude-acc register        # install onto your PATH for any shell
 claude-acc unregister      # remove it (--purge also deletes saved profiles)
 claude-acc help
 ```
+
+`switch` shortcuts: with exactly two saved profiles, a bare `claude-acc switch`
+toggles to the other one; `claude-acc switch -` returns to the previously
+active profile. Switching to the already-active profile just refreshes its
+snapshot. `--json` makes `list`/`current` scriptable (e.g. a prompt segment
+showing which account you're on).
 
 ### First-time setup
 
@@ -79,23 +86,31 @@ claude-acc save work
 # log out, log in as account B, then:
 claude-acc save personal
 
-# from now on:
-claude-acc switch work     # then fully quit + reopen Claude Code
+# from now on (with two profiles, a bare `switch` toggles):
+claude-acc switch          # then fully quit + reopen Claude Code
 ```
 
 ## How it works
 
 A **profile** (stored in `~/.claude/account-profiles/<name>/`) snapshots:
 
-- `credentials.json` — an exact copy of your OAuth tokens
+- `credentials.json` — your OAuth tokens (DPAPI-encrypted on Windows)
 - `oauthAccount.json` + `userID.txt` — the cached identity from `~/.claude.json`
 - `email.txt` — for display
 
-Token storage is OS-aware:
+Live token storage is OS-aware:
 
 - **Windows / Linux** — `~/.claude/.credentials.json` (copied verbatim)
 - **macOS** — the login Keychain, service `Claude Code-credentials`, via the
   built-in `security` CLI
+
+Claude Code rotates the OAuth tokens in place, so a snapshot goes stale over
+time. To compensate, **every `switch` first re-saves the account you are
+leaving**, so its profile always holds the freshest tokens.
+
+If `CLAUDE_CONFIG_DIR` is set, it is honored the same way Claude Code honors
+it: profiles, credentials and `.claude.json` are read from that directory
+instead of `~/.claude`.
 
 **A switch requires a full restart of Claude Code** — the running session holds
 the active credentials in memory.
@@ -112,8 +127,8 @@ scanner, leaving everything else byte-for-byte intact. The scanner lives in
 ## Requirements
 
 - **At runtime**: nothing. The binary is self-contained. On macOS it calls the
-  built-in `security` CLI for the Keychain; on Windows `register` uses the
-  built-in `powershell` to edit your user PATH.
+  built-in `security` CLI for the Keychain; on Windows `register` edits your
+  user PATH directly in the registry (preserving `%VAR%`-style entries).
 - **To build**: Go 1.25+.
 
 ## Caveats
@@ -122,7 +137,9 @@ scanner, leaving everything else byte-for-byte intact. The scanner lives in
   choose "Always Allow". Override the service name via `CLAUDE_KEYCHAIN_SERVICE`
   if needed.
 - Profiles contain live OAuth tokens — treat `~/.claude/account-profiles/` as
-  sensitive.
+  sensitive. On **Windows** the tokens are DPAPI-encrypted (readable only by
+  your user account on that machine, so profiles are not portable); on
+  **macOS / Linux** they are plain files with `0600` permissions.
 
 ## License
 

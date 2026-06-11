@@ -4,8 +4,8 @@
 // them on demand.
 //
 // Single static binary, no runtime dependencies: on macOS it shells out to the
-// built-in `security` CLI for the Keychain; on Windows it uses the built-in
-// `powershell` to edit the user PATH during `register`. Nothing to install.
+// built-in `security` CLI for the Keychain; on Windows it edits the user PATH
+// directly in the registry during `register`. Nothing to install.
 package main
 
 import (
@@ -20,29 +20,45 @@ func main() {
 	if len(args) >= 1 {
 		cmd = args[0]
 	}
-	arg1 := ""
-	if len(args) >= 2 {
-		arg1 = args[1]
+
+	// Split the remaining args into flags (--json, --purge, ...) and
+	// positionals. A lone "-" is positional: `switch -` means "previous".
+	flags := map[string]bool{}
+	var pos []string
+	for _, a := range args[1:] {
+		if len(a) > 1 && strings.HasPrefix(a, "-") {
+			flags[strings.ToLower(a)] = true
+		} else {
+			pos = append(pos, a)
+		}
+	}
+	arg := func(i int) string {
+		if i < len(pos) {
+			return pos[i]
+		}
+		return ""
 	}
 
 	var err error
 	switch strings.ToLower(cmd) {
 	case "save":
-		err = cmdSave(arg1)
+		err = cmdSave(arg(0))
 	case "list", "ls":
-		err = cmdList()
+		err = cmdList(flags["--json"])
 	case "switch", "use":
-		err = cmdSwitch(arg1)
+		err = cmdSwitch(arg(0))
 	case "current", "whoami":
-		err = cmdCurrent()
+		err = cmdCurrent(flags["--json"])
 	case "remove", "rm":
-		err = cmdRemove(arg1)
+		err = cmdRemove(arg(0))
+	case "rename", "mv":
+		err = cmdRename(arg(0), arg(1))
 	case "register":
 		err = cmdRegister()
 	case "unregister", "uninstall":
-		err = cmdUnregister(arg1)
+		err = cmdUnregister(flags["--purge"])
 	case "version", "--version", "-v":
-		fmt.Println(version)
+		fmt.Println(versionString())
 	case "", "help", "--help", "-h":
 		help()
 	default:
@@ -57,19 +73,22 @@ func main() {
 }
 
 func help() {
-	fmt.Printf("%s v%s - switch between Anthropic (Claude Code) accounts.\n\n", bin, version)
-	fmt.Printf("Usage: %s <command> [name]\n\n", bin)
+	fmt.Printf("%s v%s - switch between Anthropic (Claude Code) accounts.\n\n", bin, versionString())
+	fmt.Printf("Usage: %s <command> [args...]\n\n", bin)
 	fmt.Println("Commands:")
-	fmt.Println("  save [name]      Save the current account (defaults to its email as the name)")
-	fmt.Println("  list             List saved profiles; * marks the active one")
-	fmt.Println("  switch <name>    Switch to a saved profile (then restart Claude Code)")
-	fmt.Println("  current          Show the active account (email / org / plan)")
-	fmt.Println("  remove <name>    Delete a saved profile")
-	fmt.Printf("  register         Install '%s' onto your PATH for any shell\n", bin)
-	fmt.Println("  unregister       Remove it (add --purge to delete saved profiles too)")
-	fmt.Println("  help             Show this help")
-	fmt.Println("  version          Print version")
+	fmt.Println("  save [name]         Save the current account (defaults to its email as the name)")
+	fmt.Println("  list [--json]       List saved profiles; * marks the active one")
+	fmt.Println("  switch [name|-]     Switch to a profile ('-' = previous; no name toggles")
+	fmt.Println("                      between two saved profiles), then restart Claude Code")
+	fmt.Println("  current [--json]    Show the active account (profile / email / org / plan)")
+	fmt.Println("  remove <name>       Delete a saved profile")
+	fmt.Println("  rename <old> <new>  Rename a saved profile")
+	fmt.Printf("  register            Install '%s' onto your PATH for any shell\n", bin)
+	fmt.Println("  unregister          Remove it (add --purge to delete saved profiles too)")
+	fmt.Println("  help                Show this help")
+	fmt.Println("  version             Print version")
 	fmt.Println()
 	fmt.Println("Notes:")
 	fmt.Println("  - A switch requires a full restart of Claude Code to take effect.")
+	fmt.Println("  - Switching re-saves the account you are leaving, so its tokens stay fresh.")
 }

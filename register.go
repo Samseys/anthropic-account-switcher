@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -13,7 +12,7 @@ import (
 // into a canonical per-user bin directory and ensuring that directory is on the
 // user's PATH. unregister reverses both steps.
 //
-//	Windows : %LOCALAPPDATA%\claude-acc\claude-acc.exe + user PATH (via powershell)
+//	Windows : %LOCALAPPDATA%\claude-acc\claude-acc.exe + user PATH (HKCU\Environment)
 //	Unix    : ~/.local/bin/claude-acc                  + PATH export in shell rc
 
 func installDir() string {
@@ -83,19 +82,27 @@ func cmdRegister() error {
 	return nil
 }
 
-func cmdUnregister(flag string) error {
-	purge := flag == "--purge"
+func cmdUnregister(purge bool) error {
 	dir := installDir()
 
-	if dst := installedBinaryPath(); fileExists(dst) {
-		// On Windows we may be running the very binary we're trying to delete;
-		// that's fine for a copy elsewhere, but skip deleting our own image.
+	removedBinary := false
+	scheduledDelete := false
+	dst := installedBinaryPath()
+	if fileExists(dst) {
 		self, _ := os.Executable()
 		if resolved, err := filepath.EvalSymlinks(self); err == nil {
 			self = resolved
 		}
-		if !pathEqual(self, dst) {
-			_ = os.Remove(dst)
+		if !pathEqual(self, dst) || runtime.GOOS != "windows" {
+			// Unix can unlink even its own running image; the inode lives on
+			// until the process exits.
+			if err := os.Remove(dst); err == nil {
+				removedBinary = true
+			}
+		} else if scheduleSelfDelete(dst) == nil {
+			// Windows locks a running exe; a detached helper deletes it the
+			// moment we exit.
+			scheduledDelete = true
 		}
 	}
 	if runtime.GOOS == "windows" {
@@ -104,7 +111,18 @@ func cmdUnregister(flag string) error {
 		_ = removeUnixPath(dir)
 	}
 
-	fmt.Printf("Unregistered '%s' (removed the installed binary and PATH entry).\n", bin)
+	switch {
+	case removedBinary:
+		fmt.Printf("Unregistered '%s' (removed the installed binary and PATH entry).\n", bin)
+	case scheduledDelete:
+		fmt.Printf("Unregistered '%s' (removed the PATH entry).\n", bin)
+		fmt.Printf("The installed binary at %s will delete itself a moment after this command exits.\n", dst)
+	case fileExists(dst):
+		fmt.Printf("Unregistered '%s' (removed the PATH entry).\n", bin)
+		fmt.Printf("Could not delete the installed binary; remove %s manually.\n", dst)
+	default:
+		fmt.Printf("Unregistered '%s' (removed the PATH entry; no installed binary was found).\n", bin)
+	}
 	fmt.Println("(Your active Claude Code login is not touched - this only removes the tool.)")
 	if purge {
 		if err := os.RemoveAll(profileDir); err == nil {
@@ -119,58 +137,6 @@ func cmdUnregister(flag string) error {
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
-}
-
-// ---- Windows user PATH (persisted via the registry, broadcast on change) ----
-//
-// We let PowerShell perform the [Environment]::SetEnvironmentVariable call: it
-// writes HKCU\Environment and broadcasts WM_SETTINGCHANGE so new processes see
-// the update. The value is passed through an env var to avoid quoting issues.
-
-func psUserPath() string {
-	out, err := exec.Command("powershell", "-NoProfile", "-Command",
-		"[Environment]::GetEnvironmentVariable('Path','User')").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimRight(string(out), "\r\n")
-}
-
-func setPSUserPath(value string) error {
-	cmd := exec.Command("powershell", "-NoProfile", "-Command",
-		"[Environment]::SetEnvironmentVariable('Path',$env:CLAUDE_ACC_NEWPATH,'User')")
-	cmd.Env = append(os.Environ(), "CLAUDE_ACC_NEWPATH="+value)
-	return cmd.Run()
-}
-
-func addWindowsUserPath(dir string) (bool, error) {
-	cur := psUserPath()
-	for _, p := range strings.Split(cur, ";") {
-		if p != "" && pathEqual(strings.TrimSpace(p), dir) {
-			return false, nil
-		}
-	}
-	newPath := cur
-	if newPath != "" && !strings.HasSuffix(newPath, ";") {
-		newPath += ";"
-	}
-	newPath += dir
-	return true, setPSUserPath(newPath)
-}
-
-func removeWindowsUserPath(dir string) error {
-	cur := psUserPath()
-	if cur == "" {
-		return nil
-	}
-	var kept []string
-	for _, p := range strings.Split(cur, ";") {
-		if p == "" || pathEqual(strings.TrimSpace(p), dir) {
-			continue
-		}
-		kept = append(kept, p)
-	}
-	return setPSUserPath(strings.Join(kept, ";"))
 }
 
 // ---- Unix PATH (a marked export block appended to the shell rc) ----

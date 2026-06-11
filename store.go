@@ -90,13 +90,29 @@ func tryReadCreds() ([]byte, bool) {
 	return b, true
 }
 
+// securityQuote quotes an argument for `security -i`'s command tokenizer,
+// which honors double quotes and backslash escapes.
+func securityQuote(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
+}
+
 func writeCreds(data []byte) error {
 	if useKeychain() {
-		// -U updates the item if it already exists. The password is passed as
-		// an argument (briefly visible in the process list), matching the
-		// behaviour of the previous shell implementation.
-		return exec.Command("security", "add-generic-password", "-U",
-			"-a", keychainAccount(), "-s", keychainService(), "-w", string(data)).Run()
+		// -U updates the item if it already exists. The command is fed via
+		// `security -i` stdin so the token never appears in the process
+		// argument list.
+		line := fmt.Sprintf("add-generic-password -U -a %s -s %s -w %s\n",
+			securityQuote(keychainAccount()), securityQuote(keychainService()), securityQuote(string(data)))
+		cmd := exec.Command("security", "-i")
+		cmd.Stdin = strings.NewReader(line)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("writing to the Keychain: %v (%s)", err, strings.TrimSpace(stderr.String()))
+		}
+		return nil
 	}
 	return writeFileAtomic(credFile, data, 0o600)
 }
