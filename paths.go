@@ -12,7 +12,7 @@ import (
 const bin = "claude-acc"
 
 // version is overridden at build time via -ldflags "-X main.version=...".
-var version = "dev"
+var version = "1.0.0"
 
 var (
 	home       = mustHome()
