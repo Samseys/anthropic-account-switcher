@@ -1,0 +1,140 @@
+// Package install makes claude-acc reachable from any shell and manages the
+// on-disk binary: it copies the running binary into a canonical per-user bin
+// directory, puts that directory on the user's PATH, and reverses both on
+// unregister. It also owns replacing the running binary in place (used by the
+// updater) and the Windows self-delete dance.
+//
+//	Windows : %LOCALAPPDATA%\claude-acc\claude-acc.exe + user PATH (HKCU\Environment)
+//	Unix    : ~/.local/bin/claude-acc                  + PATH export in shell rc
+package install
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+
+	"github.com/Samseys/anthropic-account-switcher/internal/lock"
+	"github.com/Samseys/anthropic-account-switcher/internal/paths"
+)
+
+func installDir() string {
+	if runtime.GOOS == "windows" {
+		base := os.Getenv("LOCALAPPDATA")
+		if base == "" {
+			base = filepath.Join(paths.Home, "AppData", "Local")
+		}
+		return filepath.Join(base, paths.Bin)
+	}
+	return filepath.Join(paths.Home, ".local", "bin")
+}
+
+func installedBinaryPath() string {
+	name := paths.Bin
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(installDir(), name)
+}
+
+// Register copies the running binary into the per-user bin directory and adds
+// that directory to the user's PATH.
+func Register() error {
+	self, err := paths.SelfPath()
+	if err != nil {
+		return err
+	}
+
+	dir := installDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	dst := installedBinaryPath()
+	if !paths.PathEqual(self, dst) {
+		if err := paths.CopyFileAtomic(self, dst, 0o755); err != nil {
+			return fmt.Errorf("copying binary to %s: %w", dst, err)
+		}
+	}
+
+	fmt.Printf("Registered '%s' -> %s\n", paths.Bin, dst)
+
+	msg, err := addUserPath(dir)
+	if err != nil {
+		return err
+	}
+	fmt.Print(msg)
+	return nil
+}
+
+// Unregister removes the installed binary and the PATH entry. With purge it
+// also deletes the saved profiles.
+func Unregister(purge bool) error {
+	dir := installDir()
+
+	removedBinary := false
+	scheduledDelete := false
+	dst := installedBinaryPath()
+	if paths.FileExists(dst) {
+		self, _ := paths.SelfPath()
+		if !paths.PathEqual(self, dst) || runtime.GOOS != "windows" {
+			// Unix can unlink even its own running image; the inode lives on
+			// until the process exits.
+			if err := os.Remove(dst); err == nil {
+				removedBinary = true
+			}
+		} else if scheduleSelfDelete(dst) == nil {
+			// Windows locks a running exe; a detached helper deletes it the
+			// moment we exit.
+			scheduledDelete = true
+		}
+	}
+	_ = removeUserPath(dir)
+
+	// Clean up the install folder itself. The self-delete helper removes it
+	// once the locked binary is gone; here we cover the cases where the binary
+	// was deleted outright or was already absent. removeInstallDir only acts on
+	// the dedicated per-tool folder and only when it is empty.
+	if removedBinary || !scheduledDelete && !paths.FileExists(dst) {
+		removeInstallDir(dir)
+	}
+
+	switch {
+	case removedBinary:
+		fmt.Printf("Unregistered '%s' (removed the installed binary and PATH entry).\n", paths.Bin)
+	case scheduledDelete:
+		fmt.Printf("Unregistered '%s' (removed the PATH entry).\n", paths.Bin)
+		fmt.Printf("The installed binary at %s will delete itself a moment after this command exits.\n", dst)
+	case paths.FileExists(dst):
+		fmt.Printf("Unregistered '%s' (removed the PATH entry).\n", paths.Bin)
+		fmt.Printf("Could not delete the installed binary; remove %s manually.\n", dst)
+	default:
+		fmt.Printf("Unregistered '%s' (removed the PATH entry; no installed binary was found).\n", paths.Bin)
+	}
+	fmt.Println("(Your active Claude Code login is not touched - this only removes the tool.)")
+	if purge {
+		// Take the profile lock so we don't delete the directory out from under
+		// a concurrent save/switch. Best-effort: if the lock can't be taken we
+		// still proceed, since unregister is the user explicitly tearing down.
+		if release, err := lock.Acquire(); err == nil {
+			defer release()
+		}
+		if err := os.RemoveAll(paths.ProfileDir); err == nil {
+			fmt.Printf("Removed saved profiles at %s\n", paths.ProfileDir)
+		}
+	} else {
+		fmt.Printf("Saved profiles kept at %s (run '%s unregister --purge' to delete them too).\n", paths.ProfileDir, paths.Bin)
+	}
+	return nil
+}
+
+// removeInstallDir deletes the install folder, but only the dedicated per-tool
+// directory we create on Windows (%LOCALAPPDATA%\claude-acc). On Unix the
+// install dir is a shared location (~/.local/bin) that must never be removed.
+// os.Remove only deletes an empty directory, so a folder that still holds other
+// files is left intact.
+func removeInstallDir(dir string) {
+	if runtime.GOOS != "windows" || filepath.Base(dir) != paths.Bin {
+		return
+	}
+	_ = os.Remove(dir)
+}
