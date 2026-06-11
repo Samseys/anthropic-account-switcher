@@ -264,7 +264,24 @@ function Invoke-Remove([string]$name) {
   Emit "Removed profile `"$name`"."
 }
 
-# ---- (un)register: wire a `claude-acc` command into the PowerShell profile ----
+# ---- (un)register: wire a `claude-acc` command into PowerShell *and* cmd.exe ----
+#
+# PowerShell gets a `function claude-acc` in $PROFILE. cmd.exe has no equivalent
+# profile, so it gets a `claude-acc.cmd` shim placed next to this script, with
+# the script's folder added to the user PATH. The shim also makes `claude-acc`
+# work from the Run dialog and any other shell that honours PATH.
+
+function Get-ShimPath {
+  $dir = Split-Path -Parent $PSCommandPath
+  return (Join-Path $dir "$Bin.cmd")
+}
+
+# Compare two filesystem paths for equality (case-insensitive, trailing-slash
+# insensitive) the way Windows treats them.
+function Test-PathEqual([string]$a, [string]$b) {
+  if (-not $a -or -not $b) { return $false }
+  return ($a.TrimEnd('\', '/') -ieq $b.TrimEnd('\', '/'))
+}
 
 function Remove-Registration {
   if (-not (Test-Path -LiteralPath $PROFILE)) { return }
@@ -276,8 +293,34 @@ function Remove-Registration {
   [System.IO.File]::WriteAllLines($PROFILE, $kept)
 }
 
+# Add $dir to the persisted *user* PATH (and the current process) if absent.
+function Add-ToUserPath([string]$dir) {
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $parts = @(); if ($userPath) { $parts = $userPath -split ';' | Where-Object { $_ -ne '' } }
+  if ($parts | Where-Object { Test-PathEqual $_ $dir }) { return $false }
+  $newPath = (@($parts) + $dir) -join ';'
+  [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+  if (-not ($env:Path -split ';' | Where-Object { Test-PathEqual $_ $dir })) {
+    $env:Path = $env:Path.TrimEnd(';') + ';' + $dir
+  }
+  return $true
+}
+
+# Remove $dir from the persisted user PATH (and the current process) if present.
+function Remove-FromUserPath([string]$dir) {
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  if (-not $userPath) { return }
+  $parts = $userPath -split ';' | Where-Object { $_ -ne '' -and -not (Test-PathEqual $_ $dir) }
+  [Environment]::SetEnvironmentVariable('Path', ($parts -join ';'), 'User')
+  $env:Path = (($env:Path -split ';' | Where-Object { $_ -ne '' -and -not (Test-PathEqual $_ $dir) }) -join ';')
+}
+
 function Invoke-Register {
   $path = $PSCommandPath
+  $scriptDir = Split-Path -Parent $path
+  $leaf = Split-Path -Leaf $path
+
+  # 1) PowerShell profile function.
   $dir = Split-Path -Parent $PROFILE
   if ($dir -and -not (Test-Path -LiteralPath $dir)) {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -285,16 +328,45 @@ function Invoke-Register {
   Remove-Registration
   $block = "# $Bin" + [Environment]::NewLine + "function $Bin { & `"$path`" @args }"
   Add-Content -LiteralPath $PROFILE -Value $block
+
+  # 2) cmd.exe shim next to the script. %~dp0 keeps it relative to itself, so it
+  #    stays valid even if the folder is moved.
+  $shim = Get-ShimPath
+  $nl = "`r`n"
+  $cmd = "@echo off$nl" +
+         "powershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0$leaf`" %*$nl"
+  Write-TextNoBom $shim $cmd
+
+  # 3) Put the script's folder on the user PATH so the shim resolves by name.
+  $added = Add-ToUserPath $scriptDir
+
   Emit "Registered '$Bin' -> $path"
-  Emit "Added a function to your PowerShell profile ($PROFILE)."
-  Emit "Run '. `$PROFILE' or open a new terminal, then use '$Bin'."
-  Emit "If scripts are blocked, run: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned"
+  Emit ""
+  Emit "PowerShell: added a function to your profile ($PROFILE)."
+  Emit "            run '. `$PROFILE' or open a new terminal."
+  Emit "cmd.exe:    created shim $shim"
+  if ($added) {
+    Emit "            added '$scriptDir' to your user PATH."
+    Emit "            open a NEW cmd window for PATH changes to apply."
+  } else {
+    Emit "            '$scriptDir' is already on your user PATH."
+  }
+  Emit ""
+  Emit "If PowerShell blocks scripts, run: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned"
 }
 
 function Invoke-Unregister([string]$flag) {
   $purge = ($flag -eq '--purge')
+
+  # 1) PowerShell profile function.
   Remove-Registration
-  Emit "Unregistered '$Bin' (removed the function from your PowerShell profile)."
+
+  # 2) cmd.exe shim + PATH entry.
+  $shim = Get-ShimPath
+  if (Test-Path -LiteralPath $shim) { Remove-Item -Force -LiteralPath $shim }
+  Remove-FromUserPath (Split-Path -Parent $PSCommandPath)
+
+  Emit "Unregistered '$Bin' (removed the PowerShell function, cmd shim, and PATH entry)."
   Emit "(Your active Claude Code login is not touched - this only removes the tool.)"
   if ($purge) {
     if (Test-Path -LiteralPath $ProfileDir) {
@@ -318,8 +390,8 @@ function Invoke-Help {
   Emit "  switch <name>    Switch to a saved profile (then restart Claude Code)"
   Emit "  current          Show the active account (email / org / plan)"
   Emit "  remove <name>    Delete a saved profile"
-  Emit "  register         Add a '$Bin' function to your PowerShell profile"
-  Emit "  unregister       Remove it (add --purge to delete saved profiles too)"
+  Emit "  register         Wire up '$Bin' for PowerShell (profile fn) and cmd (PATH shim)"
+  Emit "  unregister       Remove both (add --purge to delete saved profiles too)"
   Emit "  help             Show this help"
   Emit "  version          Print version"
   Emit ""

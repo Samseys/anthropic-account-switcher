@@ -17,16 +17,25 @@ git clone https://github.com/Samseys/anthropic-account-switcher.git
 
 Then run the script for your OS directly, or add a short alias.
 
-### Windows (PowerShell)
+### Windows (PowerShell & cmd)
 
 ```powershell
 # run directly
 C:\path\to\anthropic-account-switcher\claude-acc.ps1 list
 
-# or register a `claude-acc` command in your PowerShell profile (one time)
+# or register a `claude-acc` command (one time)
 C:\path\to\anthropic-account-switcher\claude-acc.ps1 register
-. $PROFILE   # reload, or open a new terminal
+. $PROFILE   # reload PowerShell, or open a new terminal
 ```
+
+`register` wires up **both shells**:
+
+- **PowerShell** — adds a `claude-acc` function to your `$PROFILE`.
+- **cmd.exe** — creates a `claude-acc.cmd` shim next to the script and adds the
+  script's folder to your user `PATH`, so `claude-acc` works in Command Prompt
+  (and the Run dialog). Open a **new** cmd window for the PATH change to apply.
+
+`unregister` removes the function, the shim, and the PATH entry.
 
 If scripts are blocked, allow local scripts once:
 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
@@ -50,7 +59,7 @@ claude-acc list            # list saved profiles; * marks the active one
 claude-acc switch <name>   # switch to a profile, then restart Claude Code
 claude-acc current         # show the active account (email / org / plan)
 claude-acc remove <name>   # delete a saved profile
-claude-acc register        # add a `claude-acc` command to your shell/PowerShell profile
+claude-acc register        # wire up `claude-acc` for your shell (PowerShell + cmd on Windows)
 claude-acc unregister      # remove it (--purge also deletes saved profiles)
 claude-acc help
 ```
