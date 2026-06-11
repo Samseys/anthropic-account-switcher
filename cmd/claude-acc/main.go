@@ -25,7 +25,11 @@ func main() {
 	// positionals. A lone "-" is positional: `switch -` means "previous".
 	flags := map[string]bool{}
 	var pos []string
-	for _, a := range args[1:] {
+	var rest []string
+	if len(args) > 1 {
+		rest = args[1:]
+	}
+	for _, a := range rest {
 		if len(a) > 1 && strings.HasPrefix(a, "-") {
 			flags[strings.ToLower(a)] = true
 		} else {
