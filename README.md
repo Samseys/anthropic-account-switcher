@@ -23,9 +23,9 @@ Then run the script for your OS directly, or add a short alias.
 # run directly
 C:\path\to\anthropic-account-switcher\claude-acc.ps1 list
 
-# optional: add a `claude-acc` command to your PowerShell profile
-'function claude-acc { & "C:\path\to\anthropic-account-switcher\claude-acc.ps1" @args }' |
-  Add-Content $PROFILE
+# or register a `claude-acc` command in your PowerShell profile (one time)
+C:\path\to\anthropic-account-switcher\claude-acc.ps1 register
+. $PROFILE   # reload, or open a new terminal
 ```
 
 If scripts are blocked, allow local scripts once:
@@ -37,8 +37,9 @@ If scripts are blocked, allow local scripts once:
 chmod +x claude-acc.sh
 ./claude-acc.sh list
 
-# optional: put it on your PATH
-ln -s "$PWD/claude-acc.sh" /usr/local/bin/claude-acc
+# or register a `claude-acc` alias in your shell profile (one time)
+./claude-acc.sh register
+source ~/.bashrc   # or ~/.zshrc, or open a new terminal
 ```
 
 ## Usage
@@ -49,7 +50,8 @@ claude-acc list            # list saved profiles; * marks the active one
 claude-acc switch <name>   # switch to a profile, then restart Claude Code
 claude-acc current         # show the active account (email / org / plan)
 claude-acc remove <name>   # delete a saved profile
-claude-acc uninstall       # remove the tool's data (--purge also deletes profiles)
+claude-acc register        # add a `claude-acc` command to your shell/PowerShell profile
+claude-acc unregister      # remove it (--purge also deletes saved profiles)
 claude-acc help
 ```
 
@@ -81,8 +83,7 @@ Token storage is OS-aware:
   built-in `security` CLI
 
 **A switch requires a full restart of Claude Code** — the running session holds
-the active credentials in memory. Every switch also writes a `_previous`
-profile, so `claude-acc switch _previous` undoes the last switch.
+the active credentials in memory.
 
 ### Why it splices `~/.claude.json` instead of rewriting it
 

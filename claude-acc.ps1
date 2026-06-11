@@ -22,7 +22,6 @@ $ClaudeDir  = Join-Path $HOME '.claude'
 $CredFile   = Join-Path $ClaudeDir '.credentials.json'
 $ConfigFile = Join-Path $HOME '.claude.json'
 $ProfileDir = Join-Path $ClaudeDir 'account-profiles'
-$Previous   = '_previous'
 
 function Emit([string]$m) { Write-Output $m }
 function Die([string]$m)  { Write-Output "ERROR: $m"; exit 1 }
@@ -180,20 +179,30 @@ function Invoke-Save([string]$name) { New-Snapshot $name $false }
 function Invoke-List {
   $dirs = @()
   if (Test-Path -LiteralPath $ProfileDir) {
-    $dirs = Get-ChildItem -LiteralPath $ProfileDir -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -ne $Previous }
+    $dirs = Get-ChildItem -LiteralPath $ProfileDir -Directory -ErrorAction SilentlyContinue
   }
   if (-not $dirs -or $dirs.Count -eq 0) {
     Emit "No saved profiles yet. Run '$Bin save' to store the current account."
     return
   }
-  $liveCred = Read-Text $CredFile
+  # Detect the active profile by stable identity (userID), since Claude Code
+  # rotates the OAuth token in place and the credential blob drifts over time.
+  # Fall back to a byte-for-byte credential compare when no identity is present.
+  $cfg = Read-Text $ConfigFile
+  $liveId = if ($cfg) { Get-TopLevelValueText $cfg 'userID' } else { $null }
+  $liveCred = if (-not $liveId) { Read-Text $CredFile } else { $null }
   Emit "Saved account profiles:"
   Emit ""
   foreach ($d in $dirs) {
     $email = Get-ProfileEmail $d.FullName
-    $profCred = Read-Text (Join-Path $d.FullName 'credentials.json')
-    $isCur = ($liveCred -and $profCred -and ($liveCred.Trim() -eq $profCred.Trim()))
+    $isCur = $false
+    if ($liveId) {
+      $profId = Read-Text (Join-Path $d.FullName 'userID.txt')
+      if ($profId -and ($profId.Trim() -eq $liveId.Trim())) { $isCur = $true }
+    } elseif ($liveCred) {
+      $profCred = Read-Text (Join-Path $d.FullName 'credentials.json')
+      if ($profCred -and ($liveCred.Trim() -eq $profCred.Trim())) { $isCur = $true }
+    }
     $mark = if ($isCur) { '* ' } else { '  ' }
     $tag  = if ($isCur) { '   [current]' } else { '' }
     Emit "  $mark$($d.Name)   ($email)$tag"
@@ -210,9 +219,6 @@ function Invoke-Switch([string]$name) {
   if (-not (Test-Path -LiteralPath $credSrc)) {
     Die "No profile named `"$name`". Run '$Bin list' to see options."
   }
-
-  # Save the account we are leaving so a switch is always undoable.
-  try { New-Snapshot $Previous $true } catch { }
 
   # Restore credentials (byte-exact copy).
   Copy-Item -LiteralPath $credSrc -Destination $CredFile -Force
@@ -232,7 +238,6 @@ function Invoke-Switch([string]$name) {
   Emit ""
   Emit "IMPORTANT: fully quit Claude Code and reopen it for the new account to take"
   Emit "effect. The current session is still authenticated as the previous account."
-  Emit "(Run '$Bin switch $Previous' to undo this switch.)"
 }
 
 function Invoke-Current {
@@ -259,19 +264,47 @@ function Invoke-Remove([string]$name) {
   Emit "Removed profile `"$name`"."
 }
 
-function Invoke-Uninstall([string]$flag) {
+# ---- (un)register: wire a `claude-acc` command into the PowerShell profile ----
+
+function Remove-Registration {
+  if (-not (Test-Path -LiteralPath $PROFILE)) { return }
+  $esc = [regex]::Escape($Bin)
+  $lines = [System.IO.File]::ReadAllLines($PROFILE)
+  $kept = $lines | Where-Object {
+    ($_ -notmatch ('^\s*#\s*' + $esc + '\s*$')) -and ($_ -notmatch ('^\s*function\s+' + $esc + '\b'))
+  }
+  [System.IO.File]::WriteAllLines($PROFILE, $kept)
+}
+
+function Invoke-Register {
+  $path = $PSCommandPath
+  $dir = Split-Path -Parent $PROFILE
+  if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  }
+  Remove-Registration
+  $block = "# $Bin" + [Environment]::NewLine + "function $Bin { & `"$path`" @args }"
+  Add-Content -LiteralPath $PROFILE -Value $block
+  Emit "Registered '$Bin' -> $path"
+  Emit "Added a function to your PowerShell profile ($PROFILE)."
+  Emit "Run '. `$PROFILE' or open a new terminal, then use '$Bin'."
+  Emit "If scripts are blocked, run: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned"
+}
+
+function Invoke-Unregister([string]$flag) {
   $purge = ($flag -eq '--purge')
-  Emit "Uninstalling $Bin (script edition)..."
-  Emit "(Your active Claude Code login is not touched - this only removes the tool's data.)"
+  Remove-Registration
+  Emit "Unregistered '$Bin' (removed the function from your PowerShell profile)."
+  Emit "(Your active Claude Code login is not touched - this only removes the tool.)"
   if ($purge) {
     if (Test-Path -LiteralPath $ProfileDir) {
       Remove-Item -Recurse -Force -LiteralPath $ProfileDir
       Emit "Removed saved profiles at $ProfileDir"
     }
   } else {
-    Emit "Saved profiles kept at $ProfileDir (run '$Bin uninstall --purge' to delete them too)."
+    Emit "Saved profiles kept at $ProfileDir (run '$Bin unregister --purge' to delete them too)."
   }
-  Emit "To finish: delete this script folder and remove any 'claude-acc' function from your PowerShell profile (`$PROFILE)."
+  Emit "You can now delete this script if you no longer need it."
 }
 
 function Invoke-Help {
@@ -285,13 +318,13 @@ function Invoke-Help {
   Emit "  switch <name>    Switch to a saved profile (then restart Claude Code)"
   Emit "  current          Show the active account (email / org / plan)"
   Emit "  remove <name>    Delete a saved profile"
-  Emit "  uninstall        Remove the tool's data (add --purge to delete profiles too)"
+  Emit "  register         Add a '$Bin' function to your PowerShell profile"
+  Emit "  unregister       Remove it (add --purge to delete saved profiles too)"
   Emit "  help             Show this help"
   Emit "  version          Print version"
   Emit ""
   Emit "Notes:"
   Emit "  - A switch requires a full restart of Claude Code to take effect."
-  Emit "  - Every switch saves a '$Previous' profile, so '$Bin switch $Previous' undoes it."
 }
 
 # ---- dispatch (parse `$args` manually so leading-dash tokens don't break) ----
@@ -307,9 +340,11 @@ switch ($cmd.ToLower()) {
   'use'       { Invoke-Switch $arg1 }
   'current'   { Invoke-Current }
   'whoami'    { Invoke-Current }
-  'remove'    { Invoke-Remove $arg1 }
-  'rm'        { Invoke-Remove $arg1 }
-  'uninstall' { Invoke-Uninstall $arg1 }
+  'remove'     { Invoke-Remove $arg1 }
+  'rm'         { Invoke-Remove $arg1 }
+  'register'   { Invoke-Register }
+  'unregister' { Invoke-Unregister $arg1 }
+  'uninstall'  { Invoke-Unregister $arg1 }
   'version'   { Emit $Version }
   '--version' { Emit $Version }
   '-v'        { Emit $Version }

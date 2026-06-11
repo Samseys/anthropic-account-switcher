@@ -18,7 +18,6 @@ CLAUDE_DIR="$HOME/.claude"
 CRED_FILE="$CLAUDE_DIR/.credentials.json"
 CONFIG_FILE="$HOME/.claude.json"
 PROFILE_DIR="$CLAUDE_DIR/account-profiles"
-PREVIOUS="_previous"
 KEYCHAIN_SERVICE="${CLAUDE_KEYCHAIN_SERVICE:-Claude Code-credentials}"
 KEYCHAIN_ACCOUNT="$(id -un)"
 
@@ -119,6 +118,8 @@ def write(p, s):
 act = sys.argv[1]
 if act == 'email':
     print(get_field(get_text(read(sys.argv[2]), 'oauthAccount'), 'emailAddress') or '')
+elif act == 'userid':
+    print(get_text(read(sys.argv[2]), 'userID') or '')
 elif act == 'summary':
     o = get_text(read(sys.argv[2]), 'oauthAccount') or ''
     print(get_field(o, 'emailAddress') or 'unknown')
@@ -162,16 +163,23 @@ cred_store() {
   fi
 }
 
-read_creds_to() { # $1 = destination file; dies if no credentials
+try_read_creds_to() { # $1 = destination; returns non-zero on failure, never exits
   local dest="$1" store
   store="$(cred_store)"
   if [ "$store" = keychain ]; then
-    if ! security find-generic-password -a "$KEYCHAIN_ACCOUNT" -s "$KEYCHAIN_SERVICE" -w > "$dest" 2>/dev/null; then
-      die "No credentials in the Keychain (service \"$KEYCHAIN_SERVICE\"). Log in to Claude Code first."
-    fi
+    security find-generic-password -a "$KEYCHAIN_ACCOUNT" -s "$KEYCHAIN_SERVICE" -w > "$dest" 2>/dev/null
   else
-    [ -f "$CRED_FILE" ] || die "No credentials at $CRED_FILE. Log in to Claude Code first."
-    cp "$CRED_FILE" "$dest"
+    [ -f "$CRED_FILE" ] && cp "$CRED_FILE" "$dest"
+  fi
+}
+
+read_creds_to() { # $1 = destination file; dies if no credentials
+  local dest="$1"
+  try_read_creds_to "$dest" && return 0
+  if [ "$(cred_store)" = keychain ]; then
+    die "No credentials in the Keychain (service \"$KEYCHAIN_SERVICE\"). Log in to Claude Code first."
+  else
+    die "No credentials at $CRED_FILE. Log in to Claude Code first."
   fi
 }
 
@@ -217,23 +225,36 @@ snapshot() { # $1 = name (may be empty), $2 = quiet (0/1)
 do_save() { snapshot "$1" 0; }
 
 do_list() {
-  local live="" livetmp found=0 header=0 b email mark tag
-  livetmp="$(mktemp)"
-  read_creds_to "$livetmp" 2>/dev/null || true
-  [ -s "$livetmp" ] && live="$(cat "$livetmp")"
-  rm -f "$livetmp"
+  local found=0 header=0 b email mark tag is_cur
+  # Detect the active profile by stable identity (userID), since Claude Code
+  # rotates the OAuth token in place and the credential blob drifts over time.
+  # Fall back to a byte-for-byte credential compare when python is unavailable.
+  local live_id="" have_id=0 livetmp live=""
+  if [ -n "$PYHELPER" ] && [ -f "$CONFIG_FILE" ]; then
+    live_id="$(pyrun userid "$CONFIG_FILE")"
+    [ -n "$live_id" ] && have_id=1
+  fi
+  if [ "$have_id" = 0 ]; then
+    livetmp="$(mktemp)"
+    try_read_creds_to "$livetmp"
+    [ -s "$livetmp" ] && live="$(cat "$livetmp")"
+    rm -f "$livetmp"
+  fi
   if [ -d "$PROFILE_DIR" ]; then
     for d in "$PROFILE_DIR"/*/; do
       [ -d "$d" ] || continue
       b="$(basename "$d")"
-      [ "$b" = "$PREVIOUS" ] && continue
       found=1
       if [ "$header" = 0 ]; then emit "Saved account profiles:"; emit ""; header=1; fi
       email="unknown"; [ -f "$d/email.txt" ] && email="$(cat "$d/email.txt")"
-      mark="  "; tag=""
-      if [ -n "$live" ] && [ -f "$d/credentials.json" ] && [ "$(cat "$d/credentials.json")" = "$live" ]; then
-        mark="* "; tag="   [current]"
+      is_cur=0
+      if [ "$have_id" = 1 ]; then
+        [ -f "$d/userID.txt" ] && [ "$(cat "$d/userID.txt")" = "$live_id" ] && is_cur=1
+      elif [ -n "$live" ] && [ -f "$d/credentials.json" ] && [ "$(cat "$d/credentials.json")" = "$live" ]; then
+        is_cur=1
       fi
+      mark="  "; tag=""
+      if [ "$is_cur" = 1 ]; then mark="* "; tag="   [current]"; fi
       emit "  ${mark}${b}   (${email})${tag}"
     done
   fi
@@ -251,7 +272,6 @@ do_switch() {
   name="$(sanitize "$name")"
   dir="$PROFILE_DIR/$name"
   [ -f "$dir/credentials.json" ] || die "No profile named \"$name\". Run '$BIN list' to see options."
-  snapshot "$PREVIOUS" 1   # undo point
   write_creds_from "$dir/credentials.json"
   if [ -n "$PYHELPER" ] && [ -f "$CONFIG_FILE" ]; then pyrun apply "$CONFIG_FILE" "$dir"; fi
   email="unknown"; [ -f "$dir/email.txt" ] && email="$(cat "$dir/email.txt")"
@@ -259,7 +279,6 @@ do_switch() {
   emit ""
   emit "IMPORTANT: fully quit Claude Code and reopen it for the new account to take"
   emit "effect. The current session is still authenticated as the previous account."
-  emit "(Run '$BIN switch $PREVIOUS' to undo this switch.)"
 }
 
 do_current() {
@@ -285,17 +304,56 @@ do_remove() {
   emit "Removed profile \"$name\"."
 }
 
-do_uninstall() {
-  local purge=0
+# ---- (un)register: wire a `claude-acc` command into the shell profile ----
+
+shell_rc() {
+  case "$(basename "${SHELL:-}")" in
+    zsh)  echo "$HOME/.zshrc" ;;
+    bash) echo "$HOME/.bashrc" ;;
+    *)    echo "$HOME/.profile" ;;
+  esac
+}
+
+script_path() {
+  local src="${BASH_SOURCE[0]:-$0}" dir
+  dir="$(cd "$(dirname "$src")" >/dev/null 2>&1 && pwd)"
+  printf '%s/%s' "$dir" "$(basename "$src")"
+}
+
+strip_alias() { # remove our alias block from rc file $1 (idempotent)
+  local rc="$1" tmp
+  [ -f "$rc" ] || return 0
+  tmp="$(mktemp)"
+  grep -vE "^# $BIN\$|^alias $BIN=" "$rc" > "$tmp" 2>/dev/null || true
+  cp "$tmp" "$rc"
+  rm -f "$tmp"
+}
+
+do_register() {
+  local rc path
+  path="$(script_path)"
+  chmod +x "$path" 2>/dev/null || true
+  rc="$(shell_rc)"
+  strip_alias "$rc"
+  printf '# %s\nalias %s="%s"\n' "$BIN" "$BIN" "$path" >> "$rc"
+  emit "Registered '$BIN' -> $path"
+  emit "Added an alias to $rc."
+  emit "Run 'source \"$rc\"' or open a new terminal, then use '$BIN'."
+}
+
+do_unregister() {
+  local purge=0 rc
   [ "${1:-}" = "--purge" ] && purge=1
-  emit "Uninstalling $BIN (script edition)..."
-  emit "(Your active Claude Code login is not touched - this only removes the tool's data.)"
+  rc="$(shell_rc)"
+  strip_alias "$rc"
+  emit "Unregistered '$BIN' (removed the alias from $rc)."
+  emit "(Your active Claude Code login is not touched - this only removes the tool.)"
   if [ "$purge" = 1 ]; then
     rm -rf "$PROFILE_DIR" && emit "Removed saved profiles at $PROFILE_DIR"
   else
-    emit "Saved profiles kept at $PROFILE_DIR (run '$BIN uninstall --purge' to delete them too)."
+    emit "Saved profiles kept at $PROFILE_DIR (run '$BIN unregister --purge' to delete them too)."
   fi
-  emit "To finish: delete this script and remove any 'claude-acc' alias from your shell profile."
+  emit "You can now delete this script if you no longer need it."
 }
 
 do_help() {
@@ -309,13 +367,13 @@ do_help() {
   emit "  switch <name>    Switch to a saved profile (then restart Claude Code)"
   emit "  current          Show the active account (email / org / plan)"
   emit "  remove <name>    Delete a saved profile"
-  emit "  uninstall        Remove the tool's data (add --purge to delete profiles too)"
+  emit "  register         Add a '$BIN' alias to your shell profile"
+  emit "  unregister       Remove the alias (add --purge to delete saved profiles too)"
   emit "  help             Show this help"
   emit "  version          Print version"
   emit ""
   emit "Notes:"
   emit "  - A switch requires a full restart of Claude Code to take effect."
-  emit "  - Every switch saves a '$PREVIOUS' profile, so '$BIN switch $PREVIOUS' undoes it."
 }
 
 # ---- dispatch ----
@@ -328,7 +386,8 @@ case "$cmd" in
   switch|use)         do_switch "$arg" ;;
   current|whoami)     do_current ;;
   remove|rm)          do_remove "$arg" ;;
-  uninstall)          do_uninstall "$arg" ;;
+  register)           do_register ;;
+  unregister|uninstall) do_unregister "$arg" ;;
   version|--version|-v) emit "$VERSION" ;;
   ""|help|--help|-h)  do_help ;;
   *)                  emit "Unknown command \"$cmd\"."; emit ""; do_help; exit 1 ;;
