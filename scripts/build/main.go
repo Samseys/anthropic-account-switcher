@@ -70,7 +70,10 @@ func version() string {
 	return strings.TrimPrefix(v, "v")
 }
 
-func ldflags() string { return "-s -w -X main.version=" + version() }
+// versionPkg is the package whose Version var the linker stamps at build time.
+const versionPkg = "github.com/Samseys/anthropic-account-switcher/internal/paths"
+
+func ldflags() string { return "-s -w -X " + versionPkg + ".Version=" + version() }
 
 func exeSuffix(goos string) string {
 	if goos == "windows" {

@@ -6,12 +6,21 @@
 // Single static binary, no runtime dependencies: on macOS it shells out to the
 // built-in `security` CLI for the Keychain; on Windows it edits the user PATH
 // directly in the registry during `register`. Nothing to install.
+//
+// This file is just the command-line front end; the work lives in the
+// internal/ packages: profile (the account commands), store (credential I/O),
+// install (register/PATH), update (self-update), and paths (shared config).
 package main
 
 import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/Samseys/anthropic-account-switcher/internal/install"
+	"github.com/Samseys/anthropic-account-switcher/internal/paths"
+	"github.com/Samseys/anthropic-account-switcher/internal/profile"
+	"github.com/Samseys/anthropic-account-switcher/internal/update"
 )
 
 func main() {
@@ -46,25 +55,35 @@ func main() {
 	var err error
 	switch strings.ToLower(cmd) {
 	case "save":
-		err = cmdSave(arg(0))
+		err = profile.Save(arg(0))
 	case "list", "ls":
-		err = cmdList(flags["--json"])
+		err = profile.List(flags["--json"])
 	case "switch", "use":
-		err = cmdSwitch(arg(0))
+		err = profile.Switch(arg(0))
 	case "current", "whoami":
-		err = cmdCurrent(flags["--json"])
+		err = profile.Current(flags["--json"])
 	case "remove", "rm":
-		err = cmdRemove(arg(0))
+		err = profile.Remove(arg(0))
 	case "rename", "mv":
-		err = cmdRename(arg(0), arg(1))
+		err = profile.Rename(arg(0), arg(1))
+	case "export":
+		// `export --all [file]` vs `export <name> [file]`: with --all the lone
+		// positional is the file, otherwise it's the name and the file follows.
+		if flags["--all"] {
+			err = profile.Export("", true, arg(0), flags["--passphrase"])
+		} else {
+			err = profile.Export(arg(0), false, arg(1), flags["--passphrase"])
+		}
+	case "import":
+		err = profile.Import(arg(0), flags["--overwrite"])
 	case "update", "upgrade", "self-update":
-		err = cmdUpdate(flags["--check"], flags["--force"])
+		err = update.Update(flags["--check"], flags["--force"])
 	case "register":
-		err = cmdRegister()
+		err = install.Register()
 	case "unregister", "uninstall":
-		err = cmdUnregister(flags["--purge"])
+		err = install.Unregister(flags["--purge"])
 	case "version", "--version", "-v":
-		fmt.Println(versionString())
+		fmt.Println(paths.VersionString())
 	case "", "help", "--help", "-h":
 		help()
 	default:
@@ -73,16 +92,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err != nil {
+		paths.Die("%s", err)
+	}
+
 	// Best-effort "a new version is available" nudge, at most once per day.
-	// It runs after every command except those where it would be noise
+	// It runs after a successful command except those where it would be noise
 	// (update itself, version/help) or would pollute machine-readable output
 	// (--json on list/current). The hint goes to stderr, never stdout.
 	if notifiesUpdate(cmd) && !flags["--json"] {
-		maybeNotifyUpdate()
-	}
-
-	if err != nil {
-		die("%s", err)
+		update.MaybeNotify()
 	}
 }
 
@@ -99,8 +118,8 @@ func notifiesUpdate(cmd string) bool {
 }
 
 func help() {
-	fmt.Printf("%s v%s - switch between Anthropic (Claude Code) accounts.\n\n", bin, versionString())
-	fmt.Printf("Usage: %s <command> [args...]\n\n", bin)
+	fmt.Printf("%s v%s - switch between Anthropic (Claude Code) accounts.\n\n", paths.Bin, paths.VersionString())
+	fmt.Printf("Usage: %s <command> [args...]\n\n", paths.Bin)
 	fmt.Println("Commands:")
 	fmt.Println("  save [name]         Save the current account (defaults to its email as the name)")
 	fmt.Println("  list [--json]       List saved profiles; * marks the active one")
@@ -109,7 +128,13 @@ func help() {
 	fmt.Println("  current [--json]    Show the active account (profile / email / org / plan)")
 	fmt.Println("  remove <name>       Delete a saved profile")
 	fmt.Println("  rename <old> <new>  Rename a saved profile")
-	fmt.Printf("  register            Install '%s' onto your PATH for any shell\n", bin)
+	fmt.Println("  export <name|--all> [file] [--passphrase]")
+	fmt.Println("                      Export profile(s) to a portable bundle (stdout if no")
+	fmt.Println("                      file); --passphrase encrypts it, else it is plaintext")
+	fmt.Println("  import <file> [--overwrite]")
+	fmt.Println("                      Import profiles from a bundle (--overwrite replaces")
+	fmt.Println("                      existing ones)")
+	fmt.Printf("  register            Install '%s' onto your PATH for any shell\n", paths.Bin)
 	fmt.Println("  unregister          Remove it (add --purge to delete saved profiles too)")
 	fmt.Println("  update [--check]    Update to the latest release (--check only reports)")
 	fmt.Println("  help                Show this help")
