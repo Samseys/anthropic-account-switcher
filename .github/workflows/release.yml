@@ -18,6 +18,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # need tags to detect a duplicate release
+
+      - name: Validate version
+        run: |
+          version="${{ inputs.version }}"
+          if ! echo "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::Version '$version' must look like vX.Y.Z (e.g. v4.0.0), optionally with a -prerelease suffix."
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+            echo "::error::Tag '$version' already exists; pick a new version."
+            exit 1
+          fi
 
       - uses: actions/setup-go@v6
         with:
@@ -28,22 +42,7 @@ jobs:
         run: go test ./...
 
       - name: Cross-compile
-        env:
-          CGO_ENABLED: 0
-        run: |
-          version="${{ inputs.version }}"
-          version="${version#v}"
-          mkdir -p dist
-          for t in windows/amd64 windows/arm64 darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
-            os="${t%/*}"; arch="${t#*/}"
-            out="claude-acc_${os}_${arch}"
-            ext=""; [ "$os" = windows ] && ext=".exe"
-            echo "building $out$ext"
-            GOOS="$os" GOARCH="$arch" go build -trimpath \
-              -ldflags "-s -w -X main.version=${version}" \
-              -o "dist/${out}${ext}" .
-          done
-          ( cd dist && sha256sum * > SHA256SUMS )
+        run: make dist VERSION="${{ inputs.version }}"
 
       - name: Publish release
         env:

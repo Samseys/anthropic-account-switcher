@@ -53,6 +53,8 @@ func main() {
 		err = cmdRemove(arg(0))
 	case "rename", "mv":
 		err = cmdRename(arg(0), arg(1))
+	case "update", "upgrade", "self-update":
+		err = cmdUpdate(flags["--check"], flags["--force"])
 	case "register":
 		err = cmdRegister()
 	case "unregister", "uninstall":
@@ -67,8 +69,28 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Best-effort "a new version is available" nudge, at most once per day.
+	// It runs after every command except those where it would be noise
+	// (update itself, version/help) or would pollute machine-readable output
+	// (--json on list/current). The hint goes to stderr, never stdout.
+	if notifiesUpdate(cmd) && !flags["--json"] {
+		maybeNotifyUpdate()
+	}
+
 	if err != nil {
 		die("%s", err)
+	}
+}
+
+// notifiesUpdate reports whether the passive update check should run for cmd.
+func notifiesUpdate(cmd string) bool {
+	switch strings.ToLower(cmd) {
+	case "update", "upgrade", "self-update",
+		"version", "--version", "-v",
+		"", "help", "--help", "-h":
+		return false
+	default:
+		return true
 	}
 }
 
@@ -85,6 +107,7 @@ func help() {
 	fmt.Println("  rename <old> <new>  Rename a saved profile")
 	fmt.Printf("  register            Install '%s' onto your PATH for any shell\n", bin)
 	fmt.Println("  unregister          Remove it (add --purge to delete saved profiles too)")
+	fmt.Println("  update [--check]    Update to the latest release (--check only reports)")
 	fmt.Println("  help                Show this help")
 	fmt.Println("  version             Print version")
 	fmt.Println()

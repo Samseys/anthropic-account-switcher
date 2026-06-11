@@ -1,0 +1,52 @@
+#!/bin/sh
+# One-line installer for claude-acc on macOS and Linux.
+#   curl -fsSL https://raw.githubusercontent.com/Samseys/anthropic-account-switcher/main/install.sh | sh
+#
+# Downloads the latest release binary for this machine, verifies it against the
+# published SHA256SUMS, then runs `register` to place it on PATH.
+set -eu
+
+repo="Samseys/anthropic-account-switcher"
+
+os="$(uname -s)"
+case "$os" in
+  Darwin) os="darwin" ;;
+  Linux)  os="linux" ;;
+  *) echo "unsupported OS: $os" >&2; exit 1 ;;
+esac
+
+arch="$(uname -m)"
+case "$arch" in
+  x86_64|amd64)  arch="amd64" ;;
+  arm64|aarch64) arch="arm64" ;;
+  *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
+esac
+
+asset="claude-acc_${os}_${arch}"
+base="https://github.com/${repo}/releases/latest/download"
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+echo "Downloading ${asset} ..."
+curl -fsSL "${base}/${asset}"     -o "${tmp}/${asset}"
+curl -fsSL "${base}/SHA256SUMS"   -o "${tmp}/SHA256SUMS"
+
+want="$(awk -v f="$asset" '{ n=$2; sub(/^\*/,"",n); if (n==f) print $1 }' "${tmp}/SHA256SUMS")"
+if [ -z "$want" ]; then
+  echo "no checksum for ${asset} in SHA256SUMS" >&2
+  exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  got="$(sha256sum "${tmp}/${asset}" | awk '{print $1}')"
+else
+  got="$(shasum -a 256 "${tmp}/${asset}" | awk '{print $1}')"
+fi
+if [ "$got" != "$want" ]; then
+  echo "checksum mismatch for ${asset}: expected ${want}, got ${got}" >&2
+  exit 1
+fi
+echo "Checksum verified."
+
+chmod +x "${tmp}/${asset}"
+"${tmp}/${asset}" register

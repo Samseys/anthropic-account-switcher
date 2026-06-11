@@ -19,5 +19,6 @@ desktop.ini
 
 # Build output
 /dist/
+/bin/
 /claude-acc
 /claude-acc.exe
