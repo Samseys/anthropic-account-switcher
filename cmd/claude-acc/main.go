@@ -7,16 +7,17 @@
 // built-in `security` CLI for the Keychain; on Windows it edits the user PATH
 // directly in the registry during `register`. Nothing to install.
 //
-// This file is just the command-line front end; the work lives in the
-// internal/ packages: profile (the account commands), store (credential I/O),
-// install (register/PATH), update (self-update), and paths (shared config).
+// This file is just the command-line front end: it declares the commands and
+// hands them to the internal/cli framework, which drives dispatch, help, and
+// shell completion from that one table. The work lives in the internal/
+// packages: profile (the account commands), store (credential I/O), install
+// (register/PATH), update (self-update), and paths (shared config).
 package main
 
 import (
-	"fmt"
 	"os"
-	"strings"
 
+	"github.com/Samseys/anthropic-account-switcher/internal/cli"
 	"github.com/Samseys/anthropic-account-switcher/internal/install"
 	"github.com/Samseys/anthropic-account-switcher/internal/paths"
 	"github.com/Samseys/anthropic-account-switcher/internal/profile"
@@ -24,124 +25,124 @@ import (
 )
 
 func main() {
-	args := os.Args[1:]
-	cmd := ""
-	if len(args) >= 1 {
-		cmd = args[0]
-	}
-
-	// Split the remaining args into flags (--json, --purge, ...) and
-	// positionals. A lone "-" is positional: `switch -` means "previous".
-	flags := map[string]bool{}
-	var pos []string
-	var rest []string
-	if len(args) > 1 {
-		rest = args[1:]
-	}
-	for _, a := range rest {
-		if len(a) > 1 && strings.HasPrefix(a, "-") {
-			flags[strings.ToLower(a)] = true
-		} else {
-			pos = append(pos, a)
-		}
-	}
-	arg := func(i int) string {
-		if i < len(pos) {
-			return pos[i]
-		}
-		return ""
-	}
-
-	var err error
-	switch strings.ToLower(cmd) {
-	case "save":
-		err = profile.Save(arg(0))
-	case "list", "ls":
-		err = profile.List(flags["--json"])
-	case "switch", "use":
-		err = profile.Switch(arg(0))
-	case "current", "whoami":
-		err = profile.Current(flags["--json"])
-	case "remove", "rm":
-		err = profile.Remove(arg(0))
-	case "rename", "mv":
-		err = profile.Rename(arg(0), arg(1))
-	case "export":
-		// `export --all [file]` vs `export <name> [file]`: with --all the lone
-		// positional is the file, otherwise it's the name and the file follows.
-		if flags["--all"] {
-			err = profile.Export("", true, arg(0), flags["--passphrase"])
-		} else {
-			err = profile.Export(arg(0), false, arg(1), flags["--passphrase"])
-		}
-	case "import":
-		err = profile.Import(arg(0), flags["--overwrite"])
-	case "update", "upgrade", "self-update":
-		err = update.Update(flags["--check"], flags["--force"])
-	case "register":
-		err = install.Register()
-	case "unregister", "uninstall":
-		err = install.Unregister(flags["--purge"])
-	case "version", "--version", "-v":
-		fmt.Println(paths.VersionString())
-	case "", "help", "--help", "-h":
-		help()
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown command %q.\n\n", cmd)
-		help()
-		os.Exit(1)
-	}
-
-	if err != nil {
+	if err := buildApp().Run(os.Args[1:]); err != nil {
 		paths.Die("%s", err)
 	}
-
-	// Best-effort "a new version is available" nudge, at most once per day.
-	// It runs after a successful command except those where it would be noise
-	// (update itself, version/help) or would pollute machine-readable output
-	// (--json on list/current). The hint goes to stderr, never stdout.
-	if notifiesUpdate(cmd) && !flags["--json"] {
-		update.MaybeNotify()
-	}
 }
 
-// notifiesUpdate reports whether the passive update check should run for cmd.
-func notifiesUpdate(cmd string) bool {
-	switch strings.ToLower(cmd) {
-	case "update", "upgrade", "self-update",
-		"version", "--version", "-v",
-		"", "help", "--help", "-h":
-		return false
-	default:
-		return true
+// buildApp constructs the command registry. It is a function (not inline in
+// main) so tests can exercise the real table's dispatch and completion.
+func buildApp() *cli.App {
+	app := cli.New(paths.Bin)
+	app.Version = paths.VersionString()
+	app.Tagline = "switch between Anthropic (Claude Code) accounts."
+	app.Notes = []string{
+		"A switch requires a full restart of Claude Code to take effect.",
+		"Switching re-saves the account you are leaving, so its tokens stay fresh.",
 	}
-}
+	app.SetProfileSource(profile.Names)
 
-func help() {
-	fmt.Printf("%s v%s - switch between Anthropic (Claude Code) accounts.\n\n", paths.Bin, paths.VersionString())
-	fmt.Printf("Usage: %s <command> [args...]\n\n", paths.Bin)
-	fmt.Println("Commands:")
-	fmt.Println("  save [name]         Save the current account (defaults to its email as the name;")
-	fmt.Println("                      updates the existing profile if this account is already saved)")
-	fmt.Println("  list [--json]       List saved profiles; * marks the active one")
-	fmt.Println("  switch [name|-]     Switch to a profile ('-' = previous; no name toggles")
-	fmt.Println("                      between two saved profiles), then restart Claude Code")
-	fmt.Println("  current [--json]    Show the active account (profile / email / org / plan)")
-	fmt.Println("  remove <name>       Delete a saved profile")
-	fmt.Println("  rename <old> <new>  Rename a saved profile")
-	fmt.Println("  export <name|--all> [file] [--passphrase]")
-	fmt.Println("                      Export profile(s) to a portable bundle (stdout if no")
-	fmt.Println("                      file); --passphrase encrypts it, else it is plaintext")
-	fmt.Println("  import <file> [--overwrite]")
-	fmt.Println("                      Import profiles from a bundle (--overwrite replaces")
-	fmt.Println("                      existing ones)")
-	fmt.Printf("  register            Install '%s' onto your PATH for any shell\n", paths.Bin)
-	fmt.Println("  unregister          Remove it (add --purge to delete saved profiles too)")
-	fmt.Println("  update [--check]    Update to the latest release (--check only reports)")
-	fmt.Println("  help                Show this help")
-	fmt.Println("  version             Print version")
-	fmt.Println()
-	fmt.Println("Notes:")
-	fmt.Println("  - A switch requires a full restart of Claude Code to take effect.")
-	fmt.Println("  - Switching re-saves the account you are leaving, so its tokens stay fresh.")
+	// After a normal command succeeds, nudge about a new version at most once a
+	// day. Skipped for Meta commands (update/version/help/completion) by the
+	// framework, and suppressed here when output is machine-readable (--json).
+	app.After = func(_ *cli.Command, ctx cli.Ctx) {
+		if !ctx.Has("--json") {
+			update.MaybeNotify()
+		}
+	}
+
+	app.Add(
+		&cli.Command{
+			Name: "save", Usage: "[name]",
+			Summary: "Save the current account (defaults to its email as the name;\n" +
+				"updates the existing profile if this account is already saved)",
+			Run: func(c cli.Ctx) error { return profile.Save(c.Arg(0)) },
+		},
+		&cli.Command{
+			Name: "list", Aliases: []string{"ls"}, Usage: "[--json]",
+			Summary: "List saved profiles; * marks the active one",
+			Flags:   []cli.Flag{{Name: "--json", Desc: "Machine-readable output"}},
+			Run:     func(c cli.Ctx) error { return profile.List(c.Has("--json")) },
+		},
+		&cli.Command{
+			Name: "switch", Aliases: []string{"use"}, Usage: "[name|-]",
+			Summary: "Switch to a profile ('-' = previous; no name toggles\n" +
+				"between two saved profiles), then restart Claude Code",
+			Args: []cli.ArgKind{cli.ArgProfile},
+			Run:  func(c cli.Ctx) error { return profile.Switch(c.Arg(0)) },
+		},
+		&cli.Command{
+			Name: "current", Aliases: []string{"whoami"}, Usage: "[--json]",
+			Summary: "Show the active account (profile / email / org / plan)",
+			Flags:   []cli.Flag{{Name: "--json", Desc: "Machine-readable output"}},
+			Run:     func(c cli.Ctx) error { return profile.Current(c.Has("--json")) },
+		},
+		&cli.Command{
+			Name: "remove", Aliases: []string{"rm"}, Usage: "<name>",
+			Summary: "Delete a saved profile",
+			Args:    []cli.ArgKind{cli.ArgProfile},
+			Run:     func(c cli.Ctx) error { return profile.Remove(c.Arg(0)) },
+		},
+		&cli.Command{
+			Name: "rename", Aliases: []string{"mv"}, Usage: "<old> <new>",
+			Summary: "Rename a saved profile",
+			Args:    []cli.ArgKind{cli.ArgProfile, cli.ArgProfile},
+			Run:     func(c cli.Ctx) error { return profile.Rename(c.Arg(0), c.Arg(1)) },
+		},
+		&cli.Command{
+			Name: "export", Usage: "<name|--all> [file] [--passphrase]",
+			Summary: "Export profile(s) to a portable bundle (stdout if no\n" +
+				"file); --passphrase encrypts it, else it is plaintext",
+			Flags: []cli.Flag{
+				{Name: "--all", Desc: "Export every saved profile"},
+				{Name: "--passphrase", Desc: "Encrypt the bundle"},
+			},
+			// With --all the lone positional is the file; otherwise the first
+			// positional is a profile name and the file follows.
+			ArgKindOverride: func(pos int, has func(string) bool) cli.ArgKind {
+				if has("--all") {
+					return cli.ArgFile
+				}
+				if pos == 0 {
+					return cli.ArgProfile
+				}
+				return cli.ArgFile
+			},
+			Run: func(c cli.Ctx) error {
+				if c.Has("--all") {
+					return profile.Export("", true, c.Arg(0), c.Has("--passphrase"))
+				}
+				return profile.Export(c.Arg(0), false, c.Arg(1), c.Has("--passphrase"))
+			},
+		},
+		&cli.Command{
+			Name: "import", Usage: "<file> [--overwrite]",
+			Summary: "Import profiles from a bundle (--overwrite replaces\n" +
+				"existing ones)",
+			Flags: []cli.Flag{{Name: "--overwrite", Desc: "Replace existing profiles"}},
+			Args:  []cli.ArgKind{cli.ArgFile},
+			Run:   func(c cli.Ctx) error { return profile.Import(c.Arg(0), c.Has("--overwrite")) },
+		},
+		&cli.Command{
+			Name:    "register",
+			Summary: "Install '" + paths.Bin + "' onto your PATH for any shell",
+			Run:     func(cli.Ctx) error { return install.Register() },
+		},
+		&cli.Command{
+			Name: "unregister", Aliases: []string{"uninstall"},
+			Summary: "Remove it (add --purge to delete saved profiles too)",
+			Flags:   []cli.Flag{{Name: "--purge", Desc: "Also delete saved profiles"}},
+			Run:     func(c cli.Ctx) error { return install.Unregister(c.Has("--purge")) },
+		},
+		&cli.Command{
+			Name: "update", Aliases: []string{"upgrade", "self-update"}, Usage: "[--check]", Meta: true,
+			Summary: "Update to the latest release (--check only reports)",
+			Flags: []cli.Flag{
+				{Name: "--check", Desc: "Only report whether an update is available"},
+				{Name: "--force", Desc: "Reinstall even if already current"},
+			},
+			Run: func(c cli.Ctx) error { return update.Update(c.Has("--check"), c.Has("--force")) },
+		},
+	)
+	return app
 }

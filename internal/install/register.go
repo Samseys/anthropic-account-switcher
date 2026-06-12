@@ -63,6 +63,15 @@ func Register() error {
 		return err
 	}
 	fmt.Print(msg)
+
+	// Tab completion is a convenience, not the point of register: a failure here
+	// must not fail the command (the binary is already installed and on PATH).
+	if msg, err := installCompletion(); err != nil {
+		fmt.Printf("Note: could not enable tab completion automatically (%v).\n", err)
+		fmt.Printf("Enable it manually with '%s completion <shell>'.\n", paths.Bin)
+	} else {
+		fmt.Print(msg)
+	}
 	return nil
 }
 
@@ -89,6 +98,7 @@ func Unregister(purge bool) error {
 		}
 	}
 	_ = removeUserPath(dir)
+	removeCompletion()
 
 	// Clean up the install folder itself. The self-delete helper removes it
 	// once the locked binary is gone; here we cover the cases where the binary

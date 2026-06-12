@@ -81,6 +81,10 @@ func emailOrUnknown(email string) string {
 	return email
 }
 
+// Names returns the names of all saved profiles, sorted. It is the exported
+// entry point shell completion uses to suggest the profile-name argument.
+func Names() []string { return profileNames() }
+
 // profileNames returns the names of all saved profiles, sorted.
 func profileNames() []string {
 	entries, _ := os.ReadDir(paths.ProfileDir)
