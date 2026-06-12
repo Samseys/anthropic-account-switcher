@@ -38,6 +38,13 @@ func TestAcquireReleaseReacquire(t *testing.T) {
 
 func TestContendedAcquireFails(t *testing.T) {
 	setup(t)
+	// Shrink the contention ceiling so the give-up path is exercised quickly;
+	// the assertions below still prove Acquire retried for retryFor rather than
+	// failing instantly, just against a 0.1s ceiling instead of the 2s default.
+	old := retryFor
+	retryFor = 100 * time.Millisecond
+	t.Cleanup(func() { retryFor = old })
+
 	rel, err := Acquire()
 	if err != nil {
 		t.Fatal(err)

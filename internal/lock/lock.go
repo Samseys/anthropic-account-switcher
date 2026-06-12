@@ -3,10 +3,11 @@
 // credential write with a config patch, or race two saves against the same
 // profile directory.
 //
-// It is pure Go and cross-platform: the lock is a single file created with
-// O_CREATE|O_EXCL holding the owner's PID and timestamp. A lock left behind by
-// a crashed process (dead PID, or simply older than ~30s) is stolen, so the
-// tool never wedges itself.
+// It is pure Go and cross-platform: the lock is a single file holding the
+// owner's PID and timestamp, created atomically by writing a temp file and
+// hard-linking it into place (link fails if the target exists, and the lock is
+// never observable half-written). A lock left behind by a crashed process (dead
+// PID, or simply older than ~30s) is stolen, so the tool never wedges itself.
 package lock
 
 import (
@@ -23,9 +24,13 @@ import (
 const (
 	lockName   = ".lock"
 	staleAfter = 30 * time.Second      // a lock older than this is stolen
-	retryFor   = 2 * time.Second       // total time to wait on contention
 	retryEvery = 50 * time.Millisecond // poll interval while waiting
 )
+
+// retryFor is the total time Acquire waits on contention before giving up. It's
+// a var, not a const, so tests can shrink it to exercise the give-up path
+// without sleeping out the full production ceiling.
+var retryFor = 2 * time.Second
 
 // info is the JSON payload written into the lockfile, used to decide whether a
 // contended lock is stale.
@@ -69,26 +74,65 @@ func Acquire() (func(), error) {
 
 // tryAcquire attempts a single exclusive create of the lockfile. It returns
 // os.ErrExist (wrapped) when the lock is already held.
+//
+// The fully-populated payload is written to a temp file first and then linked
+// into place: os.Link is atomic and fails if the target exists, so the lock
+// never appears as an empty, half-written file that a racing stealStale could
+// mistake for an unparseable (and therefore stale) lock and steal out from
+// under its live owner.
 func tryAcquire() (func(), error) {
-	f, err := os.OpenFile(lockPath(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	host, _ := os.Hostname()
+	data, _ := json.Marshal(info{PID: os.Getpid(), Time: time.Now(), Host: host})
+
+	tmp, err := os.CreateTemp(paths.ProfileDir, ".lock-*")
 	if err != nil {
 		return nil, err
 	}
-	host, _ := os.Hostname()
-	data, _ := json.Marshal(info{PID: os.Getpid(), Time: time.Now(), Host: host})
-	_, _ = f.Write(data)
-	if cerr := f.Close(); cerr != nil {
-		_ = os.Remove(lockPath())
+	tmpName := tmp.Name()
+	if _, werr := tmp.Write(data); werr != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return nil, werr
+	}
+	if cerr := tmp.Close(); cerr != nil {
+		_ = os.Remove(tmpName)
 		return nil, cerr
 	}
+	// Link fails with ErrExist when the lock is already held; that error must
+	// propagate so Acquire's retry/steal loop sees it.
+	if lerr := os.Link(tmpName, lockPath()); lerr != nil {
+		_ = os.Remove(tmpName)
+		return nil, lerr
+	}
+	_ = os.Remove(tmpName)
+
 	released := false
 	return func() {
 		if released {
 			return
 		}
 		released = true
-		_ = os.Remove(lockPath())
+		_ = removeLock()
 	}, nil
+}
+
+// removeLock deletes the lockfile, retrying briefly. On Windows a delete fails
+// with a sharing violation while another goroutine or process has the file open
+// for reading (stealStale, below); that open is sub-millisecond, so a short
+// retry clears it. Without the retry the owner's release would silently leave
+// the lock behind and wedge every other waiter. A missing file is success.
+func removeLock() error {
+	deadline := time.Now().Add(time.Second)
+	for {
+		err := os.Remove(lockPath())
+		if err == nil || errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // stealStale removes the current lockfile if it looks abandoned, reporting
@@ -103,7 +147,7 @@ func stealStale() bool {
 	}
 	var held info
 	if json.Unmarshal(b, &held) != nil {
-		_ = os.Remove(lockPath())
+		_ = removeLock()
 		return true
 	}
 	stale := time.Since(held.Time) > staleAfter
@@ -115,7 +159,7 @@ func stealStale() bool {
 		}
 	}
 	if stale {
-		_ = os.Remove(lockPath())
+		_ = removeLock()
 		return true
 	}
 	return false
