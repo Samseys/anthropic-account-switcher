@@ -264,17 +264,36 @@ func snapshot(name string, quiet bool) (string, error) {
 	id := readLiveIdentity()
 	oauthText, userIDText, email := id.oauth, id.userID, id.email
 
+	// existing is the profile (if any) already tracking this live account,
+	// matched by the stable userID. It both supplies the default name for a
+	// bare save and pins the name a named save may use, so one account never
+	// ends up stored under two profiles.
+	existing := activeProfile()
+
 	if name == "" {
-		if email != "" {
+		switch {
+		case existing != "":
+			name = existing
+		case email != "":
 			name = email
-		} else {
+		default:
 			name = "default"
 		}
 	}
 	name = paths.Sanitize(name)
 
+	if existing != "" && existing != name {
+		return "", fmt.Errorf("this account is already saved as profile %q; use '%s save' (no name) to update it, or '%s rename %s %s' to rename it",
+			existing, paths.Bin, paths.Bin, existing, name)
+	}
+	// Reaching here with existing != name means this account is not the one
+	// saved under name, so writing would clobber a different account's profile.
+	if existing != name && profileExists(name) {
+		return "", fmt.Errorf("a profile named %q already exists for a different account; remove it first or pick another name", name)
+	}
+
 	if !quiet && profileExists(name) {
-		fmt.Printf("Profile %q already exists; overwriting it.\n", name)
+		fmt.Printf("Updating profile %q with the current account.\n", name)
 	}
 
 	encCreds, err := encryptCreds(creds)

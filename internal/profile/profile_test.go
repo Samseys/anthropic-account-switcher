@@ -167,6 +167,65 @@ func TestSwitchToActiveProfileRefreshesSnapshot(t *testing.T) {
 	}
 }
 
+func TestSaveSameAccountIsIdempotent(t *testing.T) {
+	setupEnv(t)
+	writeAccount(t, "a@example.com", "id-a", "tok-a")
+
+	// First save under a custom name.
+	if _, err := snapshot("work", true); err != nil {
+		t.Fatal(err)
+	}
+
+	// A bare save of the same account updates the existing profile in place
+	// rather than creating a second one keyed by email.
+	name, err := snapshot("", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "work" {
+		t.Fatalf("bare save reused name = %q, want work", name)
+	}
+	if got := profileNames(); len(got) != 1 || got[0] != "work" {
+		t.Fatalf("profiles after bare re-save = %v, want [work]", got)
+	}
+
+	// Saving the same account under a different name is refused.
+	if _, err := snapshot("duplicate", true); err == nil ||
+		!strings.Contains(err.Error(), "already saved as profile") {
+		t.Fatalf("want already-saved error, got %v", err)
+	}
+	if got := profileNames(); len(got) != 1 || got[0] != "work" {
+		t.Fatalf("profiles after rejected save = %v, want [work]", got)
+	}
+}
+
+func TestSaveRejectsNameCollisionWithOtherAccount(t *testing.T) {
+	setupEnv(t)
+
+	// Account A is saved as "work".
+	writeAccount(t, "a@example.com", "id-a", "tok-a")
+	if _, err := snapshot("work", true); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now logged in as a different account B; saving over "work" must be
+	// refused rather than clobbering account A's profile.
+	writeAccount(t, "b@example.com", "id-b", "tok-b")
+	if _, err := snapshot("work", true); err == nil ||
+		!strings.Contains(err.Error(), "different account") {
+		t.Fatalf("want different-account collision error, got %v", err)
+	}
+
+	// Account A's snapshot is intact.
+	pc, err := readProfileCreds(filepath.Join(paths.ProfileDir, "work"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(pc), "tok-a") {
+		t.Fatalf("collision overwrote the existing profile: %s", pc)
+	}
+}
+
 func TestSwitchUnknownProfile(t *testing.T) {
 	setupEnv(t)
 	writeAccount(t, "a@example.com", "id-a", "tok-a")
