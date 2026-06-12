@@ -1,7 +1,6 @@
 package lock
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +11,6 @@ import (
 	"github.com/Samseys/anthropic-account-switcher/internal/paths"
 )
 
-// setup points paths.ProfileDir at a scratch directory for the test.
 func setup(t *testing.T) {
 	t.Helper()
 	old := paths.ProfileDir
@@ -38,9 +36,7 @@ func TestAcquireReleaseReacquire(t *testing.T) {
 
 func TestContendedAcquireFails(t *testing.T) {
 	setup(t)
-	// Shrink the contention ceiling so the give-up path is exercised quickly;
-	// the assertions below still prove Acquire retried for retryFor rather than
-	// failing instantly, just against a 0.1s ceiling instead of the 2s default.
+	// Shrink so the give-up path is exercised quickly without sleeping 2s.
 	old := retryFor
 	retryFor = 100 * time.Millisecond
 	t.Cleanup(func() { retryFor = old })
@@ -62,48 +58,24 @@ func TestContendedAcquireFails(t *testing.T) {
 	}
 }
 
-func TestStealsStaleLockByAge(t *testing.T) {
+func TestLeftoverLockFileDoesNotBlock(t *testing.T) {
 	setup(t)
 	if err := os.MkdirAll(paths.ProfileDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	host, _ := os.Hostname()
-	// Fresh PID (our own, alive) but an old timestamp: the age check alone must
-	// make this stale.
-	old := info{PID: os.Getpid(), Time: time.Now().Add(-time.Hour), Host: host}
-	data, _ := json.Marshal(old)
-	if err := os.WriteFile(lockPath(), data, 0o600); err != nil {
+	// A leftover lock file (including old PID-file format) must not block.
+	if err := os.WriteFile(lockPath(), []byte(`{"pid":12345,"time":"2020-01-01T00:00:00Z"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
 	rel, err := Acquire()
 	if err != nil {
-		t.Fatalf("expected to steal the stale lock, got %v", err)
+		t.Fatalf("a leftover lock file blocked the acquire: %v", err)
 	}
 	defer rel()
 	if d := time.Since(start); d > time.Second {
-		t.Fatalf("stealing a stale lock took %v; expected it to be near-instant", d)
+		t.Fatalf("acquiring over a leftover lock file took %v; expected near-instant", d)
 	}
-}
-
-func TestStealsLockOfDeadProcess(t *testing.T) {
-	setup(t)
-	if err := os.MkdirAll(paths.ProfileDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	host, _ := os.Hostname()
-	// Fresh timestamp but a PID that cannot be alive: the liveness check must
-	// make this stale.
-	dead := info{PID: 1 << 30, Time: time.Now(), Host: host}
-	data, _ := json.Marshal(dead)
-	if err := os.WriteFile(lockPath(), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	rel, err := Acquire()
-	if err != nil {
-		t.Fatalf("expected to steal the dead process's lock, got %v", err)
-	}
-	rel()
 }
 
 func TestConcurrentAcquireSerializes(t *testing.T) {
