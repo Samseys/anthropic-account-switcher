@@ -1,8 +1,5 @@
-// Package paths holds the shared, process-wide configuration every other
-// package depends on: the canonical locations of Claude Code's state, the tool
-// name and version, and the small filesystem helpers (atomic writes, optional
-// reads, OS-aware path comparison) used throughout. It is the leaf of the
-// dependency graph — it imports nothing from this module.
+// Package paths is the leaf of the dependency graph: it owns canonical Claude
+// Code file locations, the tool name/version, and shared filesystem helpers.
 package paths
 
 import (
@@ -17,15 +14,12 @@ import (
 	"time"
 )
 
-// Bin is the tool's binary/command name.
 const Bin = "acc-claude"
 
-// Version is overridden at build time via
-// -ldflags "-X .../internal/paths.Version=...".
+// Version is overridden at build time via -ldflags "-X .../internal/paths.Version=...".
 var Version string
 
-// VersionString prefers the ldflags-injected version, then the module version
-// recorded by `go install module@vX.Y.Z`, then "dev" for plain local builds.
+// VersionString returns the ldflags version, the module version from go install, or "dev".
 func VersionString() string {
 	if Version != "" {
 		return Version
@@ -38,11 +32,8 @@ func VersionString() string {
 	return "dev"
 }
 
-// Claude Code honors CLAUDE_CONFIG_DIR to relocate ~/.claude; when it is set,
-// ~/.claude.json moves inside that directory too.
-//
-// These are vars rather than consts so tests can point them at a scratch
-// directory.
+// Vars (not consts) so tests can redirect them to a scratch directory.
+// Honors CLAUDE_CONFIG_DIR exactly as Claude Code does.
 var (
 	Home       = mustHome()
 	ClaudeDir  = defaultClaudeDir()
@@ -73,7 +64,6 @@ func mustHome() string {
 	return h
 }
 
-// Die prints an error to stderr and exits with status 1.
 func Die(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "ERROR: "+format+"\n", a...)
 	os.Exit(1)
@@ -81,11 +71,10 @@ func Die(format string, a ...any) {
 
 var sanitizeRe = regexp.MustCompile(`[^a-zA-Z0-9._@-]`)
 
-// Sanitize maps an arbitrary profile name to a filesystem-safe form. It is
-// idempotent.
+// Sanitize maps an arbitrary profile name to a filesystem-safe form (idempotent).
 func Sanitize(s string) string { return sanitizeRe.ReplaceAllString(s, "_") }
 
-// ReadFileOpt reads a file, returning ("", false) if it is missing/unreadable.
+// ReadFileOpt returns ("", false) if the file is missing or unreadable.
 func ReadFileOpt(path string) (string, bool) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -94,7 +83,7 @@ func ReadFileOpt(path string) (string, bool) {
 	return string(b), true
 }
 
-// ReadTrim reads a file and trims surrounding whitespace, or returns "".
+// ReadTrim returns the file's contents with surrounding whitespace trimmed, or "".
 func ReadTrim(path string) string {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -103,8 +92,8 @@ func ReadTrim(path string) string {
 	return strings.TrimSpace(string(b))
 }
 
-// WriteFileAtomic writes data via a temp file in the same directory and renames
-// it into place. Go writes no BOM, which Claude Code's JSON parser requires.
+// WriteFileAtomic writes via a temp-then-rename. No BOM is written, which
+// Claude Code's JSON parser requires.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".acc-claude-*.tmp")
@@ -120,24 +109,16 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	// Best effort: chmod is meaningful on Unix, a near no-op on Windows.
-	_ = os.Chmod(tmpName, perm)
+	_ = os.Chmod(tmpName, perm) // near no-op on Windows
 	return renameWithRetry(tmpName, path)
 }
 
-// renameWithRetry renames oldpath to newpath, retrying on transient failures.
-// On Windows an on-access antivirus scanner opens a freshly written executable
-// to scan it the instant it lands on disk, holding a handle that lacks rename/
-// delete sharing rights; the immediate rename then fails with
-// ERROR_ACCESS_DENIED (or a sharing violation) until the scanner releases it. A
-// plain os.Rename turns that race into a hard install failure, so we retry with
-// a capped exponential backoff until a deadline. The window is generous because
-// third-party endpoint suites (e.g. Bitdefender Endpoint Security) do cloud
-// lookups and can hold the handle for many seconds — far longer than the
-// few hundred milliseconds Windows Defender typically takes. On Unix rename does
-// not hit this, so the first attempt succeeds and we never sleep.
+// renameWithRetry retries the rename under capped exponential backoff.
+// On Windows, AV scanners briefly hold a handle on freshly written files,
+// causing ERROR_ACCESS_DENIED; a few seconds is enough for JSON/text files.
+// On Unix the first attempt always succeeds.
 func renameWithRetry(oldpath, newpath string) error {
-	const deadlineAfter = 30 * time.Second
+	const deadlineAfter = 5 * time.Second
 	deadline := time.Now().Add(deadlineAfter)
 	backoff := 50 * time.Millisecond
 	for {
@@ -152,8 +133,7 @@ func renameWithRetry(oldpath, newpath string) error {
 	}
 }
 
-// SelfPath returns the absolute path of the running binary with symlinks
-// resolved. If symlink resolution fails the raw os.Executable path is kept.
+// SelfPath returns the absolute path of the running binary with symlinks resolved.
 func SelfPath() (string, error) {
 	self, err := os.Executable()
 	if err != nil {
@@ -165,13 +145,11 @@ func SelfPath() (string, error) {
 	return self, nil
 }
 
-// FileExists reports whether path exists and is statable.
 func FileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
 }
 
-// PrintJSON writes v to stdout as indented JSON.
 func PrintJSON(v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -181,8 +159,7 @@ func PrintJSON(v any) error {
 	return nil
 }
 
-// PathEqual compares two filesystem paths the way the host OS treats them:
-// case-insensitively on Windows, and ignoring a trailing separator everywhere.
+// PathEqual compares paths case-insensitively on Windows, ignoring trailing separators.
 func PathEqual(a, b string) bool {
 	a = strings.TrimRight(a, `\/`)
 	b = strings.TrimRight(b, `\/`)
