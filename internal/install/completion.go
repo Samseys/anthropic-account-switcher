@@ -8,21 +8,12 @@ import (
 	"github.com/Samseys/anthropic-account-switcher/internal/paths"
 )
 
-// Tab-completion install/uninstall, wired into register/unregister. On Unix the
-// installed line sources the running binary's output at shell startup (`source
-// <(acc-claude completion <shell>)`); on Windows a static script file is written
-// and dot-sourced instead (see completion_windows.go). Either way the script
-// defers to the binary at completion time, so it never goes stale on update.
-//
-// The shell-specific work lives in completion_unix.go and completion_windows.go;
-// the marker-block file editing shared by both lives here. completionMarker is a
-// distinct comment from the PATH block's "# acc-claude" marker, so the two never
-// interfere on shells where both land in the same startup file.
+// completionMarker is distinct from the PATH block marker ("# acc-claude") so
+// they don't interfere when both land in the same startup file.
 const completionMarker = "# " + paths.Bin + " completion"
 
 // appendMarkedBlock idempotently appends the completion marker and loader line
-// to file (creating it and any parent directories). It reports whether it wrote
-// anything: false means the marker was already present.
+// to file (creating parents as needed). Returns false if already present.
 func appendMarkedBlock(file, line string) (bool, error) {
 	if existing, ok := paths.ReadFileOpt(file); ok && strings.Contains(existing, completionMarker) {
 		return false, nil
@@ -41,10 +32,9 @@ func appendMarkedBlock(file, line string) (bool, error) {
 	return true, nil
 }
 
-// removeMarkedBlock deletes the completion marker, the loader line written right
-// after it, and the blank separator line before it. It is best-effort: a missing
-// file is a no-op. TrimSpace makes the marker match whether the file uses LF or
-// CRLF line endings, and splitting on "\n" preserves any "\r" on kept lines.
+// removeMarkedBlock removes the completion marker, the loader line after it,
+// and the blank separator before it. Missing file is a no-op. Splits on "\n"
+// (not "\r\n") so any "\r" on kept lines is preserved.
 func removeMarkedBlock(file string) {
 	content, ok := paths.ReadFileOpt(file)
 	if !ok {
@@ -55,10 +45,10 @@ func removeMarkedBlock(file string) {
 	for i := 0; i < len(lines); i++ {
 		if strings.TrimSpace(lines[i]) == completionMarker {
 			if i+1 < len(lines) {
-				i++ // drop the loader line that follows the marker
+				i++ // skip the loader line
 			}
 			if n := len(kept); n > 0 && strings.TrimSpace(kept[n-1]) == "" {
-				kept = kept[:n-1] // drop the blank separator before the marker
+				kept = kept[:n-1] // remove preceding blank line
 			}
 			continue
 		}

@@ -2,16 +2,9 @@
 
 package install
 
-// Unix tab-completion install across every relevant shell:
-//   - bash and zsh load it from a marked block in their rc file (sourced after
-//     the PATH block, so `acc-claude` is already reachable);
-//   - fish gets a dedicated file in its completions directory, which it autoloads.
-//
-// install configures the current shell plus any other shell whose config already
-// exists, so a user of more than one shell is covered without us fabricating an
-// rc for a shell they have never used. uninstall clears ALL shells regardless of
-// the current one, so a tool registered under one shell unregisters cleanly from
-// another.
+// Unix tab-completion: bash/zsh get a marked loader block in their rc; fish gets
+// a dedicated autoloaded file. Configures the current shell plus any other whose
+// config already exists. Uninstall always clears all shells regardless of current.
 
 import (
 	"fmt"
@@ -22,16 +15,13 @@ import (
 	"github.com/Samseys/anthropic-account-switcher/internal/paths"
 )
 
-// currentShell returns the base name of the user's login shell (e.g. "bash").
 func currentShell() string { return filepath.Base(os.Getenv("SHELL")) }
 
-// fishCompletionPath is the autoloaded per-user completion file for fish.
 func fishCompletionPath() string {
 	return filepath.Join(paths.Home, ".config", "fish", "completions", paths.Bin+".fish")
 }
 
-// shellTarget is one shell's completion configuration. Exactly one of rc (bash/
-// zsh, with loader) or file (fish) is set.
+// shellTarget is one shell's completion configuration: rc+loader (bash/zsh) or file (fish).
 type shellTarget struct {
 	name   string
 	rc     string // bash/zsh rc file
@@ -39,7 +29,6 @@ type shellTarget struct {
 	file   string // fish: the dedicated completion file
 }
 
-// unixTargets is every shell completion location on this OS.
 func unixTargets() []shellTarget {
 	return []shellTarget{
 		{name: "bash", rc: filepath.Join(paths.Home, ".bashrc"),
@@ -50,8 +39,8 @@ func unixTargets() []shellTarget {
 	}
 }
 
-// applicable reports whether this shell should be configured: it is the user's
-// current shell, or it is already set up (its config file/dir exists).
+// applicable reports whether to configure this shell: it's the current shell,
+// or its config file/dir already exists.
 func (tg shellTarget) applicable(current string) bool {
 	if tg.name == current {
 		return true
@@ -62,8 +51,7 @@ func (tg shellTarget) applicable(current string) bool {
 	return paths.FileExists(tg.rc)
 }
 
-// install enables completion for this shell, reporting whether it wrote anything
-// (false means it was already enabled).
+// install enables completion for this shell; returns false if already enabled.
 func (tg shellTarget) install() (bool, error) {
 	if tg.file != "" { // fish
 		if paths.FileExists(tg.file) {
@@ -81,7 +69,6 @@ func (tg shellTarget) install() (bool, error) {
 	return appendMarkedBlock(tg.rc, tg.loader)
 }
 
-// remove disables completion for this shell, best-effort.
 func (tg shellTarget) remove() {
 	if tg.file != "" {
 		_ = os.Remove(tg.file)
@@ -90,8 +77,7 @@ func (tg shellTarget) remove() {
 	removeMarkedBlock(tg.rc)
 }
 
-// installCompletion enables tab completion for every applicable shell. It is
-// best-effort and returns a human-readable status message.
+// installCompletion enables tab completion for every applicable shell, best-effort.
 func installCompletion() (string, error) {
 	current := currentShell()
 	var configured, already []string
@@ -100,8 +86,7 @@ func installCompletion() (string, error) {
 			continue
 		}
 		switch wrote, err := tg.install(); {
-		case err != nil:
-			// best-effort: a shell config we can't write to is skipped
+		case err != nil: // best-effort: skip shells we can't write to
 		case wrote:
 			configured = append(configured, tg.name)
 		default:
@@ -119,8 +104,6 @@ func installCompletion() (string, error) {
 	}
 }
 
-// removeCompletion reverses installCompletion for ALL shells, so completion is
-// cleaned up regardless of which shell is current now.
 func removeCompletion() {
 	for _, tg := range unixTargets() {
 		tg.remove()

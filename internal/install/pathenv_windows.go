@@ -13,21 +13,15 @@ import (
 	"github.com/Samseys/anthropic-account-switcher/internal/paths"
 )
 
-// Windows PATH handling: the user PATH is edited directly in HKCU\Environment
-// rather than via [Environment]::SetEnvironmentVariable. The .NET getter expands
-// REG_EXPAND_SZ values, so a read-modify-write through it would flatten entries
-// like %USERPROFILE%\bin (the classic setx PATH-mangling bug). Reading the raw
-// value and writing it back with its original registry type preserves them.
-// This is the Windows counterpart to pathenv_unix.go.
+// Windows PATH handling: edits HKCU\Environment directly rather than via
+// [Environment]::SetEnvironmentVariable, which expands REG_EXPAND_SZ and would
+// flatten entries like %USERPROFILE%\bin (the classic setx PATH-mangling bug).
 
-// envKeyPath is the HKCU subkey that holds the user PATH. It is a var, not a
-// const, only so tests can point the round-trip at a throwaway key instead of
-// mutating the real user environment (see pathenv_windows_test.go).
+// envKeyPath is a var (not const) so tests can redirect it to a throwaway key.
 var envKeyPath = `Environment`
 
-// getUserPath returns the raw (unexpanded) user PATH value and its registry
-// type. A missing value is not an error: it returns "" and EXPAND_SZ, the type
-// Windows itself uses for PATH.
+// getUserPath returns the raw (unexpanded) user PATH and its registry type.
+// A missing value is not an error; returns "" and EXPAND_SZ (Windows's default type).
 func getUserPath() (string, uint32, error) {
 	k, err := registry.OpenKey(registry.CURRENT_USER, envKeyPath, registry.QUERY_VALUE)
 	if err != nil {
@@ -62,8 +56,7 @@ func setUserPath(value string, typ uint32) error {
 	return nil
 }
 
-// broadcastEnvChange tells running shells/Explorer that the environment
-// changed (the WM_SETTINGCHANGE broadcast SetEnvironmentVariable would send).
+// broadcastEnvChange sends WM_SETTINGCHANGE so running shells pick up the new PATH.
 func broadcastEnvChange() {
 	const (
 		hwndBroadcast   = 0xffff
@@ -79,8 +72,7 @@ func broadcastEnvChange() {
 		uintptr(unsafe.Pointer(param)), smtoAbortIfHung, 5000, 0)
 }
 
-// samePathEntry reports whether a raw ";"-separated PATH entry refers to dir,
-// ignoring surrounding whitespace and empty fields.
+// samePathEntry reports whether a PATH entry refers to dir (whitespace-insensitive).
 func samePathEntry(entry, dir string) bool {
 	return entry != "" && paths.PathEqual(strings.TrimSpace(entry), dir)
 }

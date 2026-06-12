@@ -69,3 +69,52 @@ func TestAddUserPathIsIdempotent(t *testing.T) {
 		t.Fatalf("second add should be a no-op: msg=%q err=%v", msg, err)
 	}
 }
+
+// TestAddUserPathDriftCorrects proves convergence from a drifted state: a block
+// left by an older install at a different location is replaced by a single block
+// at the current dir, with surrounding user content preserved.
+func TestAddUserPathDriftCorrects(t *testing.T) {
+	rc := withHome(t)
+	const oldDir = "/opt/old/bin"
+	const newDir = "/home/me/.local/bin"
+
+	seed := "# my rc\n" + pathMarker + "\n" + pathExportFor(oldDir) + "\nalias x=y\n"
+	if err := os.WriteFile(rc, []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := addUserPath(newDir); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := paths.ReadFileOpt(rc)
+
+	if strings.Contains(got, pathExportFor(oldDir)) {
+		t.Errorf("stale export not removed:\n%s", got)
+	}
+	if !strings.Contains(got, pathExportFor(newDir)) {
+		t.Errorf("new export not written:\n%s", got)
+	}
+	if n := strings.Count(got, pathMarker+"\n"); n != 1 {
+		t.Errorf("want exactly one PATH block, got %d:\n%s", n, got)
+	}
+	if !strings.Contains(got, "alias x=y") {
+		t.Errorf("user content clobbered:\n%s", got)
+	}
+}
+
+// TestAddUserPathWritesRCWhenAlreadyExported proves the decision is driven by the
+// rc, not the live $PATH: dir is exported in this process but absent from the rc,
+// so the block must still be written for future shells to inherit it.
+func TestAddUserPathWritesRCWhenAlreadyExported(t *testing.T) {
+	rc := withHome(t)
+	const dir = "/home/me/.local/bin"
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+
+	if _, err := addUserPath(dir); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := paths.ReadFileOpt(rc)
+	if !strings.Contains(got, pathExportFor(dir)) {
+		t.Errorf("block not written despite dir already in live $PATH:\n%s", got)
+	}
+}

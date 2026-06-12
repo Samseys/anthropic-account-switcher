@@ -5,8 +5,7 @@ import (
 	"github.com/Samseys/anthropic-account-switcher/internal/paths"
 )
 
-// Commands returns the install subcommands (PATH registration), declared next
-// to their handlers so main only wires them in with app.Add(install.Commands()...).
+// Commands returns the register and unregister subcommands.
 func Commands() []*cli.Command {
 	return []*cli.Command{
 		{

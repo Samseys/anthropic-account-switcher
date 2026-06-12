@@ -1,8 +1,10 @@
-// Package install makes acc-claude reachable from any shell and manages the
-// on-disk binary: it copies the running binary into a canonical per-user bin
-// directory, puts that directory on the user's PATH, and reverses both on
-// unregister. It also owns replacing the running binary in place (used by the
-// updater) and the Windows self-delete dance.
+// Package install makes acc-claude reachable from any shell: register puts the
+// per-user bin directory on the user's PATH and installs shell tab-completion,
+// and unregister reverses both (deleting the installed binary where possible).
+// It never copies, downloads, or rewrites any executable — placing the binary
+// is the installer scripts' job (install.ps1 / install.sh); a program that
+// writes executables into a user dir is exactly the dropper shape endpoint
+// security flags.
 //
 //	Windows : %LOCALAPPDATA%\acc-claude\acc-claude.exe + user PATH (HKCU\Environment)
 //	Unix    : ~/.local/bin/acc-claude                  + PATH export in shell rc
@@ -37,11 +39,8 @@ func installedBinaryPath() string {
 	return filepath.Join(installDir(), name)
 }
 
-// Register puts the per-user bin directory on the user's PATH and installs shell
-// tab-completion. It does not copy, move, or rewrite any executable: the binary
-// is placed at installedBinaryPath() by the installer script (install.ps1 /
-// install.sh) and runs from there, so register only wires up the surrounding
-// environment for the binary that already exists.
+// Register puts the per-user bin directory on PATH and installs shell completion.
+// Does not copy or rewrite any executable — the installer script does that.
 func Register() error {
 	dir := installDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -50,25 +49,20 @@ func Register() error {
 
 	dst := installedBinaryPath()
 	if self, err := paths.SelfPath(); err == nil && !paths.PathEqual(self, dst) {
-		// We are not the installed copy (e.g. a local build, or the binary was
-		// run straight from Downloads). We deliberately do not copy ourselves
-		// into place - that is the installer's job, and a binary that writes
-		// executables into a user dir is exactly what endpoint security flags -
-		// so just tell the user where a managed install would live.
+		// Not the installed copy (local build or run from Downloads). Tell the
+		// user where a managed install would live; PATH is still being wired.
 		fmt.Printf("Note: running from %s (not the install location %s).\n", self, dst)
 		fmt.Printf("Re-run the installer for a managed install; PATH is still being set for %s.\n", dir)
 	}
-
-	fmt.Printf("Registered '%s' on PATH (%s)\n", paths.Bin, dir)
 
 	msg, err := addUserPath(dir)
 	if err != nil {
 		return err
 	}
+	fmt.Printf("Registered '%s' on PATH (%s)\n", paths.Bin, dir)
 	fmt.Print(msg)
 
-	// Tab completion is a convenience, not the point of register: a failure here
-	// must not fail the command (the binary is already installed and on PATH).
+	// Completion failure must not fail the command: the binary is already on PATH.
 	if msg, err := installCompletion(); err != nil {
 		fmt.Printf("Note: could not enable tab completion automatically (%v).\n", err)
 		fmt.Printf("Enable it manually with '%s completion <shell>'.\n", paths.Bin)
@@ -87,12 +81,8 @@ func Unregister(purge bool) error {
 	dst := installedBinaryPath()
 	if paths.FileExists(dst) {
 		self, _ := paths.SelfPath()
-		// Unix can unlink even its own running image (the inode lives on until
-		// the process exits). On Windows the running .exe is locked, so a binary
-		// unregistering itself cannot delete its own image; the message below
-		// tells the user to remove the folder, and a later run sweeps any
-		// leftover. We still delete here when the running binary is *not* the
-		// installed copy (e.g. unregistering from a downloaded build).
+		// On Windows the running .exe is locked and cannot delete itself; on
+		// Unix the inode lives until the process exits, so unlink is safe there.
 		if !paths.PathEqual(self, dst) || runtime.GOOS != "windows" {
 			if err := os.Remove(dst); err == nil {
 				removedBinary = true
@@ -102,9 +92,6 @@ func Unregister(purge bool) error {
 	_ = removeUserPath(dir)
 	removeCompletion()
 
-	// Clean up the install folder itself, covering the cases where the binary
-	// was deleted outright or was already absent. removeInstallDir only acts on
-	// the dedicated per-tool folder and only when it is empty.
 	if removedBinary || !paths.FileExists(dst) {
 		removeInstallDir(dir)
 	}
@@ -115,20 +102,18 @@ func Unregister(purge bool) error {
 		fmt.Printf("Unregistered '%s' (removed the installed binary and PATH entry).\n", paths.Bin)
 	case paths.FileExists(dst):
 		fmt.Printf("Unregistered '%s' (removed the PATH entry).\n", paths.Bin)
-		// The running .exe can't delete itself on Windows. This is the one step
-		// the user must do by hand, so defer it to the end and set it off on its
-		// own block instead of burying it between status lines.
+		// The running .exe can't delete itself on Windows; user must do it manually.
 		leftoverDir = filepath.Dir(dst)
 	default:
 		fmt.Printf("Unregistered '%s' (removed the PATH entry; no installed binary was found).\n", paths.Bin)
 	}
 	fmt.Println("(Your active Claude Code login is not touched - this only removes the tool.)")
 	if purge {
-		// Take the profile lock so we don't delete the directory out from under
-		// a concurrent save/switch. Best-effort: if the lock can't be taken we
-		// still proceed, since unregister is the user explicitly tearing down.
+		// Acquire then immediately release: holding the lock while calling
+		// RemoveAll would keep an open handle inside the directory, blocking
+		// removal on Windows. Best-effort: proceed even if the lock fails.
 		if release, err := lock.Acquire(); err == nil {
-			defer release()
+			release()
 		}
 		if err := os.RemoveAll(paths.ProfileDir); err == nil {
 			fmt.Printf("Removed saved profiles at %s\n", paths.ProfileDir)
@@ -137,8 +122,6 @@ func Unregister(purge bool) error {
 		fmt.Printf("Saved profiles kept at %s (run '%s unregister --purge' to delete them too).\n", paths.ProfileDir, paths.Bin)
 	}
 
-	// One manual step remains and it's easy to miss, so call it out last in its
-	// own visually separated block.
 	if leftoverDir != "" {
 		fmt.Println()
 		fmt.Println("  ACTION REQUIRED: the running binary could not delete itself.")
@@ -148,11 +131,9 @@ func Unregister(purge bool) error {
 	return nil
 }
 
-// removeInstallDir deletes the install folder, but only the dedicated per-tool
-// directory we create on Windows (%LOCALAPPDATA%\acc-claude). On Unix the
-// install dir is a shared location (~/.local/bin) that must never be removed.
-// os.Remove only deletes an empty directory, so a folder that still holds other
-// files is left intact.
+// removeInstallDir removes the install folder only on Windows (the dedicated
+// per-tool dir). On Unix ~/.local/bin is shared and must not be removed.
+// os.Remove silently skips non-empty directories.
 func removeInstallDir(dir string) {
 	if runtime.GOOS != "windows" || filepath.Base(dir) != paths.Bin {
 		return

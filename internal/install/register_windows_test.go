@@ -82,3 +82,42 @@ func TestRegisterUnregisterLeavesNoTraces(t *testing.T) {
 		t.Errorf("TRACE LEFT: install dir still at %s", installDir())
 	}
 }
+
+// TestRegisterIsIdempotent proves a re-run converges to the same state: the user
+// PATH and the completion profile are unchanged after the second Register, with
+// no duplicate install-dir entry or completion block.
+func TestRegisterIsIdempotent(t *testing.T) {
+	withScratchEnvKey(t)
+	profile := withScratchProfiles(t, "Microsoft.PowerShell_profile.ps1")[0]
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+
+	// Stage the binary the installer would have placed.
+	if err := os.MkdirAll(installDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(installedBinaryPath(), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Register(); err != nil {
+		t.Fatalf("first Register: %v", err)
+	}
+	firstPath := currentPath(t)
+	firstProfile, _ := paths.ReadFileOpt(profile)
+
+	if err := Register(); err != nil {
+		t.Fatalf("second Register: %v", err)
+	}
+	if got := currentPath(t); got != firstPath {
+		t.Errorf("Register not idempotent; PATH changed on re-run:\nfirst:  %q\nsecond: %q", firstPath, got)
+	}
+	if got, _ := paths.ReadFileOpt(profile); got != firstProfile {
+		t.Errorf("Register not idempotent; profile changed on re-run:\n--- first ---\n%s\n--- second ---\n%s", firstProfile, got)
+	}
+	if n := strings.Count(currentPath(t), installDir()); n != 1 {
+		t.Errorf("want exactly one install-dir PATH entry, got %d: %q", n, currentPath(t))
+	}
+	if got, _ := paths.ReadFileOpt(profile); strings.Count(got, completionMarker) != 1 {
+		t.Errorf("want exactly one completion block:\n%s", got)
+	}
+}

@@ -79,6 +79,42 @@ func TestRegisterUnregisterLeavesNoTraces(t *testing.T) {
 	}
 }
 
+// TestRegisterIsIdempotent proves a re-run converges to the same state: the rc
+// is byte-identical after the second Register, with exactly one PATH block and
+// one completion block (no accumulation).
+func TestRegisterIsIdempotent(t *testing.T) {
+	home := withScratchHome(t, "bash")
+	rc := filepath.Join(home, ".bashrc")
+
+	// Stage the binary the installer would have placed.
+	if err := os.MkdirAll(installDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(installedBinaryPath(), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Register(); err != nil {
+		t.Fatalf("first Register: %v", err)
+	}
+	first, _ := paths.ReadFileOpt(rc)
+
+	if err := Register(); err != nil {
+		t.Fatalf("second Register: %v", err)
+	}
+	second, _ := paths.ReadFileOpt(rc)
+
+	if first != second {
+		t.Errorf("Register not idempotent; rc changed on re-run:\n--- first ---\n%s\n--- second ---\n%s", first, second)
+	}
+	if n := strings.Count(second, "# "+paths.Bin+"\n"); n != 1 {
+		t.Errorf("want exactly one PATH block, got %d:\n%s", n, second)
+	}
+	if n := strings.Count(second, completionMarker); n != 1 {
+		t.Errorf("want exactly one completion block, got %d:\n%s", n, second)
+	}
+}
+
 // TestUnregisterRemovesFishCompletion covers the fish path, where completion is
 // a dedicated autoloaded file rather than an rc block.
 func TestUnregisterRemovesFishCompletion(t *testing.T) {
