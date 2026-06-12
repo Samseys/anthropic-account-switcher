@@ -9,8 +9,7 @@ import (
 	"testing"
 )
 
-// exportToFile runs Export with stdout muted (it prints a summary/warning),
-// failing the test on error.
+// exportToFile runs Export with stdout muted, failing the test on error.
 func exportToFile(t *testing.T, name string, all bool, file string, encrypt bool) {
 	t.Helper()
 	var err error
@@ -43,7 +42,6 @@ func TestExportImportPlaintextRoundTrip(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "bundle.json")
 	exportToFile(t, "", true, file, false)
 
-	// A plaintext bundle carries the decrypted tokens verbatim.
 	raw, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +50,6 @@ func TestExportImportPlaintextRoundTrip(t *testing.T) {
 		t.Fatalf("plaintext export missing tokens: %s", raw)
 	}
 
-	// Wipe both profiles and restore them from the bundle.
 	if err := os.RemoveAll(profilePath("work")); err != nil {
 		t.Fatal(err)
 	}
@@ -143,14 +140,13 @@ func TestImportRespectsOverwrite(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "b.json")
 	exportToFile(t, "work", false, file, false)
 
-	// The live profile drifts (token rotated, new email) and is re-saved.
+	// Simulate token rotation and re-save.
 	writeAccount(t, "a2@example.com", "id-a", "tok-a-new")
 	if _, err := snapshot("work", true); err != nil {
 		t.Fatal(err)
 	}
 
-	// Without --overwrite the existing profile is left untouched.
-	importFromFile(t, file, false)
+	importFromFile(t, file, false) // no --overwrite: existing profile must be untouched
 	pc, err := readProfileCreds(profilePath("work"))
 	if err != nil {
 		t.Fatal(err)
@@ -159,14 +155,33 @@ func TestImportRespectsOverwrite(t *testing.T) {
 		t.Fatalf("import without --overwrite clobbered the existing profile: %s", pc)
 	}
 
-	// With --overwrite the bundle's snapshot replaces it.
-	importFromFile(t, file, true)
+	importFromFile(t, file, true) // --overwrite: bundle's snapshot replaces the profile
 	pc, err = readProfileCreds(profilePath("work"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(pc), "tok-a") || strings.Contains(string(pc), "tok-a-new") {
 		t.Fatalf("import --overwrite did not replace the profile: %s", pc)
+	}
+}
+
+func TestImportSkipsDuplicateAccount(t *testing.T) {
+	setupEnv(t)
+	writeAccount(t, "a@example.com", "id-a", "tok-a")
+	if _, err := snapshot("work", true); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "b.json")
+	exportToFile(t, "work", false, file, false)
+
+	// Account now lives under a different name; --overwrite only covers name collisions,
+	// so importing must not create a second profile for it.
+	if err := os.Rename(profilePath("work"), profilePath("renamed")); err != nil {
+		t.Fatal(err)
+	}
+	importFromFile(t, file, true)
+	if profileExists("work") {
+		t.Fatal("import created a duplicate profile for an account already saved under another name")
 	}
 }
 

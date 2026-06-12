@@ -12,27 +12,26 @@ import (
 	"os"
 	"strings"
 
+	"golang.org/x/term"
+
+	"github.com/Samseys/anthropic-account-switcher/internal/claudejson"
 	"github.com/Samseys/anthropic-account-switcher/internal/lock"
 	"github.com/Samseys/anthropic-account-switcher/internal/paths"
 )
 
-// passEnv lets callers supply the export/import passphrase non-interactively
-// (and keep it out of shell history); prompting is the fallback.
+// passEnv lets callers supply the passphrase non-interactively (avoids shell history).
 const passEnv = "ACC_CLAUDE_PASSPHRASE"
 
-// bundleVersion is the on-disk format version of an export bundle.
 const bundleVersion = 1
 
-// exportBundle is the portable, cross-machine representation of one or more
-// profiles: the *decrypted* creds plus the cached identity. This is the
-// plaintext form (also the inner payload of an encrypted bundle).
+// exportBundle is the plaintext portable representation of one or more profiles
+// (also the inner payload of an encrypted bundle).
 type exportBundle struct {
 	Version  int             `json:"version"`
 	Profiles []exportProfile `json:"profiles"`
 }
 
-// exportProfile carries one profile. The credential, oauthAccount and userID
-// fields are kept as raw JSON so they round-trip verbatim into profile files.
+// exportProfile carries one profile; raw JSON fields round-trip verbatim into profile files.
 type exportProfile struct {
 	Name         string          `json:"name"`
 	Email        string          `json:"email,omitempty"`
@@ -41,9 +40,8 @@ type exportProfile struct {
 	Credentials  json.RawMessage `json:"credentials"`
 }
 
-// sealed is the envelope written when --passphrase is used: the exportBundle
-// JSON, AES-GCM encrypted under a key derived from the passphrase. The Salt,
-// Nonce and Ciphertext byte slices marshal to base64 in JSON.
+// sealed is the encrypted envelope: exportBundle JSON under AES-GCM with a
+// PBKDF2-derived key. Salt, Nonce, Ciphertext marshal to base64.
 type sealed struct {
 	Encrypted  bool   `json:"encrypted"`
 	KDF        string `json:"kdf"`
@@ -170,6 +168,16 @@ func Import(file string, overwrite bool) error {
 			skipped++
 			continue
 		}
+		// One account, one profile — the invariant save enforces. If a profile
+		// under a *different* name already tracks this account, importing would
+		// create a duplicate, so skip it (--overwrite only covers name collisions).
+		if id := claudejson.Field(string(p.OAuthAccount), "accountUuid"); id != "" {
+			if existing := profileForAccount(id); existing != "" && existing != name {
+				fmt.Printf("Skipping %q: this account is already saved as profile %q (remove or rename it first).\n", name, existing)
+				skipped++
+				continue
+			}
+		}
 		enc, err := encryptCreds([]byte(p.Credentials))
 		if err != nil {
 			return fmt.Errorf("profile %q: %w", name, err)
@@ -194,8 +202,7 @@ func Import(file string, overwrite bool) error {
 	return nil
 }
 
-// openBundle parses a bundle's bytes, transparently decrypting an encrypted
-// envelope (prompting for the passphrase) before validating the payload.
+// openBundle parses bundle bytes, decrypting transparently if needed.
 func openBundle(raw []byte) (exportBundle, error) {
 	var probe struct {
 		Encrypted bool `json:"encrypted"`
@@ -223,8 +230,7 @@ func openBundle(raw []byte) (exportBundle, error) {
 	return b, nil
 }
 
-// seal encrypts the plaintext bundle under a passphrase using AES-256-GCM with
-// a PBKDF2-derived key.
+// seal encrypts the bundle under a passphrase (AES-256-GCM, PBKDF2 key).
 func seal(plain []byte, pass string) ([]byte, error) {
 	salt := make([]byte, saltLen)
 	if _, err := rand.Read(salt); err != nil {
@@ -253,7 +259,6 @@ func seal(plain []byte, pass string) ([]byte, error) {
 	return json.MarshalIndent(env, "", "  ")
 }
 
-// open reverses seal, returning the decrypted plaintext bundle.
 func open(raw []byte, pass string) ([]byte, error) {
 	var env sealed
 	if err := json.Unmarshal(raw, &env); err != nil {
@@ -286,9 +291,9 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-// readPassphrase returns the bundle passphrase from $ACC_CLAUDE_PASSPHRASE, or
-// prompts for it. When confirm is set (export), it asks twice and checks they
-// match. The prompt echoes input, so the env var is the recommended path.
+// readPassphrase reads from $ACC_CLAUDE_PASSPHRASE or prompts the user.
+// When confirm is true (export), it asks twice. Terminal input is echo-free;
+// piped stdin echoes whatever the pipe shows.
 func readPassphrase(confirm bool) (string, error) {
 	if v := os.Getenv(passEnv); v != "" {
 		return v, nil
@@ -296,7 +301,16 @@ func readPassphrase(confirm bool) (string, error) {
 	r := bufio.NewReader(os.Stdin)
 	prompt := func(label string) (string, error) {
 		fmt.Fprintf(os.Stderr, "%s (set %s to avoid this prompt): ", label, passEnv)
-		line, err := r.ReadString('\n')
+		var line string
+		var err error
+		if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
+			var b []byte
+			b, err = term.ReadPassword(fd)
+			fmt.Fprintln(os.Stderr) // restore the newline ReadPassword consumed
+			line = string(b)
+		} else {
+			line, err = r.ReadString('\n')
+		}
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
 			if err != nil {

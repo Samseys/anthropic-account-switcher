@@ -20,12 +20,12 @@ import (
 	"github.com/Samseys/anthropic-account-switcher/internal/store"
 )
 
-// A profile (stored in ~/.claude/account-profiles/<name>/) snapshots:
+// Profile directory contents (under ~/.claude/account-profiles/<name>/):
 //
-//	credentials.json   the OAuth tokens (DPAPI-encrypted on Windows)
-//	oauthAccount.json  the raw oauthAccount value from ~/.claude.json
-//	userID.txt         the raw userID value from ~/.claude.json
-//	email.txt          the account email, for display
+//	credentials.json   OAuth tokens (DPAPI-encrypted on Windows)
+//	oauthAccount.json  raw oauthAccount value from ~/.claude.json
+//	userID.txt         raw userID value from ~/.claude.json
+//	email.txt          account email, for display
 const (
 	fileCreds  = "credentials.json"
 	fileOAuth  = "oauthAccount.json"
@@ -33,21 +33,15 @@ const (
 	fileEmail  = "email.txt"
 )
 
-// profilePath returns the directory of the named profile. It is the authoritative
-// sanitization boundary: the name is sanitized here so it always maps to a single,
-// filesystem-safe directory, and callers need not pre-sanitize for path purposes
-// (Sanitize is idempotent). Commands acting on an existing profile should go
-// through resolveProfile, which also validates existence.
+// profilePath is the sanitization boundary: callers need not pre-sanitize (Sanitize
+// is idempotent). Commands on an existing profile should use resolveProfile instead.
 func profilePath(name string) string {
 	return filepath.Join(paths.ProfileDir, paths.Sanitize(name))
 }
 
-// resolveProfile is the single entry point for commands that operate on an
-// existing profile. It returns the canonical (sanitized) name and its directory,
-// erroring with the available-profiles hint when no such profile exists. An empty
-// name is rejected up front: Sanitize("") is "", which maps to ProfileDir itself,
-// so profileExists("") would spuriously succeed (the dir exists) and point a
-// command at the profiles root instead of a profile.
+// resolveProfile returns the canonical name and directory of an existing profile.
+// Empty names are rejected explicitly: Sanitize("") == "" maps to ProfileDir itself,
+// so profileExists("") would spuriously succeed.
 func resolveProfile(name string) (string, string, error) {
 	name = paths.Sanitize(name)
 	if name == "" || !profileExists(name) {
@@ -56,23 +50,18 @@ func resolveProfile(name string) (string, string, error) {
 	return name, profilePath(name), nil
 }
 
-// profileUserID returns the userID recorded in the profile at dir (quotes
-// included), or "". This is the machine-wide analytics ID; it is restored into
-// ~/.claude.json on switch but is NOT used to identify accounts (see
-// profileAccountID).
+// profileUserID returns the raw userID from the profile (quotes included), or "".
+// This is a machine-wide analytics ID; identity matching uses profileAccountID instead.
 func profileUserID(dir string) string {
 	return paths.ReadTrim(filepath.Join(dir, fileUserID))
 }
 
-// profileAccountID returns the account UUID recorded in the profile at dir
-// (from its saved oauthAccount), or "". This is the per-account identity used
-// to match the live account against saved profiles.
+// profileAccountID returns the accountUuid from the profile's saved oauthAccount, or "".
 func profileAccountID(dir string) string {
 	return claudejson.Field(profileOAuth(dir), "accountUuid")
 }
 
-// profileOAuth returns the raw oauthAccount value recorded in the profile at
-// dir, or "".
+// profileOAuth returns the raw oauthAccount value from the profile, or "".
 func profileOAuth(dir string) string {
 	return paths.ReadTrim(filepath.Join(dir, fileOAuth))
 }
@@ -90,11 +79,9 @@ func emailOrUnknown(email string) string {
 	return email
 }
 
-// Names returns the names of all saved profiles, sorted. It is the exported
-// entry point shell completion uses to suggest the profile-name argument.
+// Names returns the names of all saved profiles, sorted (used by shell completion).
 func Names() []string { return profileNames() }
 
-// profileNames returns the names of all saved profiles, sorted.
 func profileNames() []string {
 	entries, _ := os.ReadDir(paths.ProfileDir)
 	var names []string
@@ -102,8 +89,7 @@ func profileNames() []string {
 		if !e.IsDir() {
 			continue
 		}
-		// Skip our own scratch dirs: ".tmp-*" (in-flight writes) and "*.bak"
-		// (a previous copy a crash may have left behind mid-swap).
+		// Skip ".tmp-*" (in-flight writes) and "*.bak" (crash remnants from mid-swap).
 		if strings.HasPrefix(e.Name(), ".") || strings.HasSuffix(e.Name(), ".bak") {
 			continue
 		}
@@ -113,7 +99,16 @@ func profileNames() []string {
 	return names
 }
 
-// profileExists reports whether a profile directory of the given name exists.
+// profileForAccount returns the name of the saved profile for accountID, or "".
+func profileForAccount(accountID string) string {
+	for _, name := range profileNames() {
+		if profileAccountID(profilePath(name)) == accountID {
+			return name
+		}
+	}
+	return ""
+}
+
 func profileExists(name string) bool {
 	info, err := os.Stat(profilePath(name))
 	return err == nil && info.IsDir()
@@ -125,9 +120,7 @@ func previousFile() string {
 	return filepath.Join(paths.ProfileDir, ".previous")
 }
 
-// availableHint returns a human-readable list of saved profiles to append to an
-// error, e.g. "; available: personal, work" (or a prompt to save if there are
-// none).
+// availableHint returns "; available: personal, work" (or a save prompt when empty).
 func availableHint() string {
 	names := profileNames()
 	if len(names) == 0 {
@@ -136,22 +129,17 @@ func availableHint() string {
 	return "; available: " + strings.Join(names, ", ")
 }
 
-// errNoProfile builds the "no profile named X" error, appending the list of
-// saved profiles as a hint.
 func errNoProfile(name string) error {
 	return fmt.Errorf("no profile named %q%s", name, availableHint())
 }
 
-// profileFile is one file to be written into a profile directory.
 type profileFile struct {
 	name string
 	data []byte
 }
 
-// writeProfileAtomic builds the named profile in a temp directory and swaps it
-// into place, so a failure mid-write never leaves a half-populated profile and
-// never destroys the existing one. The previous copy is moved aside and only
-// removed once the new directory is in place; on any error it is rolled back.
+// writeProfileAtomic writes to a temp dir and swaps it into place; the previous
+// copy is moved to .bak and removed only on success, rolled back on failure.
 func writeProfileAtomic(name string, files []profileFile) error {
 	if err := os.MkdirAll(paths.ProfileDir, 0o755); err != nil {
 		return err
@@ -160,7 +148,7 @@ func writeProfileAtomic(name string, files []profileFile) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmp) // no-op once renamed into place
+	defer os.RemoveAll(tmp) // no-op after rename succeeds
 	for _, f := range files {
 		if err := paths.WriteFileAtomic(filepath.Join(tmp, f.name), f.data, 0o600); err != nil {
 			return err
@@ -183,8 +171,8 @@ func writeProfileAtomic(name string, files []profileFile) error {
 	return nil
 }
 
-// encryptCreds returns the at-rest form of a credential snapshot (DPAPI-encrypted
-// on Windows, plaintext elsewhere; see internal/store).
+// encryptCreds returns the at-rest form of a credential snapshot (DPAPI on Windows,
+// plaintext elsewhere).
 func encryptCreds(creds []byte) ([]byte, error) {
 	data, err := store.ProtectCreds(creds)
 	if err != nil {
@@ -193,9 +181,8 @@ func encryptCreds(creds []byte) ([]byte, error) {
 	return data, nil
 }
 
-// readProfileCreds returns the decrypted credential snapshot of a profile.
-// Plaintext snapshots from older versions (or other OSes) are recognized by
-// their leading '{' and returned as-is.
+// readProfileCreds returns the decrypted credential snapshot. Plaintext snapshots
+// (leading '{') from older versions or other OSes are returned as-is.
 func readProfileCreds(dir string) ([]byte, error) {
 	b, err := os.ReadFile(filepath.Join(dir, fileCreds))
 	if err != nil {
@@ -211,9 +198,8 @@ func readProfileCreds(dir string) ([]byte, error) {
 	return out, nil
 }
 
-// liveIdentity is the cached account identity spliced into ~/.claude.json: the
-// raw oauthAccount and userID values (verbatim, quotes/braces included) plus the
-// emailAddress and accountUUID pulled out of oauthAccount.
+// liveIdentity holds the cached account identity from ~/.claude.json.
+// oauth and userID are verbatim (quotes/braces included).
 type liveIdentity struct {
 	oauth     string
 	userID    string
@@ -221,8 +207,8 @@ type liveIdentity struct {
 	email     string
 }
 
-// readLiveIdentity extracts the cached identity from ~/.claude.json. A missing
-// or unreadable config yields a zero liveIdentity (all fields "").
+// readLiveIdentity extracts the cached identity from ~/.claude.json; returns zero
+// value if the config is missing or unreadable.
 func readLiveIdentity() liveIdentity {
 	var id liveIdentity
 	cfg, ok := paths.ReadFileOpt(paths.ConfigFile)
@@ -238,19 +224,14 @@ func readLiveIdentity() liveIdentity {
 	return id
 }
 
-// liveAccountID returns the live account's UUID (oauthAccount.accountUuid in
-// ~/.claude.json), or "". Unlike the top-level userID — a machine-wide
-// analytics ID shared by every account on this install — accountUuid is unique
-// per account, so it is what identity matching keys on.
+// liveAccountID returns oauthAccount.accountUuid from ~/.claude.json, or "".
 func liveAccountID() string {
 	return readLiveIdentity().accountID
 }
 
-// activeProfile returns the name of the saved profile matching the live
-// account, or "". Matching uses the per-account accountUuid, which is stable
-// across the in-place OAuth token rotation Claude Code performs (so the
-// credential blob drifts over time). It falls back to a credential compare for
-// older profiles that predate the stored accountUuid.
+// activeProfile returns the name of the saved profile matching the live account, or "".
+// Matches on accountUuid (stable across token rotation); falls back to credential
+// comparison for older profiles without a stored accountUuid.
 func activeProfile() string {
 	liveID := liveAccountID()
 	var liveCred []byte
@@ -282,10 +263,8 @@ func snapshot(name string, quiet bool) (string, error) {
 	id := readLiveIdentity()
 	oauthText, userIDText, email := id.oauth, id.userID, id.email
 
-	// existing is the profile (if any) already tracking this live account,
-	// matched by the stable accountUuid. It both supplies the default name for a
-	// bare save and pins the name a named save may use, so one account never
-	// ends up stored under two profiles.
+	// existing is the profile (if any) already tracking this account by accountUuid.
+	// It pins the name to prevent one account ending up under two profiles.
 	existing := activeProfile()
 
 	if name == "" {
@@ -304,8 +283,7 @@ func snapshot(name string, quiet bool) (string, error) {
 		return "", fmt.Errorf("this account is already saved as profile %q; use '%s save' (no name) to update it, or '%s rename %s %s' to rename it",
 			existing, paths.Bin, paths.Bin, existing, name)
 	}
-	// Reaching here with existing != name means this account is not the one
-	// saved under name, so writing would clobber a different account's profile.
+	// A different account is already saved under this name; don't clobber it.
 	if existing != name && profileExists(name) {
 		return "", fmt.Errorf("a profile named %q already exists for a different account; remove it first or pick another name", name)
 	}
@@ -353,13 +331,10 @@ func Save(name string) error {
 	return err
 }
 
-// expiresAtRe matches the numeric expiresAt field (ms since epoch) inside a
-// credential blob.
 var expiresAtRe = regexp.MustCompile(`"expiresAt"\s*:\s*(\d+)`)
 
-// currentInfo is the --json payload for `current` when logged in. saved is not
-// omitempty: consumers rely on it being present (true or false) to distinguish a
-// tracked account from an unsaved one.
+// currentInfo is the --json payload for `current`. saved is not omitempty:
+// consumers rely on it being present to distinguish tracked vs. unsaved accounts.
 type currentInfo struct {
 	LoggedIn     bool   `json:"loggedIn"`
 	Saved        bool   `json:"saved"`
@@ -487,14 +462,12 @@ func Switch(name string) error {
 	}
 	creds, err := readProfileCreds(dir)
 	if err != nil {
-		// The directory exists (resolveProfile checked), so this is a real
-		// read/decrypt failure, not a missing profile.
 		return fmt.Errorf("profile %q: %w", name, err)
 	}
 
 	active := activeProfile()
 	if active == name {
-		// Re-snapshot so the profile keeps the freshest rotated tokens.
+		// Keep tokens fresh even on a no-op switch.
 		_, _ = snapshot(name, true)
 		fmt.Printf("Profile %q is already active; refreshed its snapshot.\n", name)
 		return nil
@@ -504,9 +477,8 @@ func Switch(name string) error {
 		return nil
 	}
 
-	// Claude Code rotates tokens in place, so the snapshot of the account we
-	// are leaving goes stale; re-save it (best effort) before overwriting.
-	// Defer the message until after the switch so the result leads the output.
+	// Re-save the leaving account before overwriting: Claude Code rotates tokens
+	// in place, so its snapshot would otherwise go stale.
 	resnapped := false
 	if active != "" {
 		if _, err := snapshot(active, true); err == nil {
@@ -514,14 +486,11 @@ func Switch(name string) error {
 		}
 	}
 
-	// A live Claude Code session can rewrite .credentials.json on a token
-	// refresh and clobber the swap. Detection is heuristic, so we only warn
-	// (below, after the switch lands) and never block on a false positive.
+	// Detection is heuristic; we only warn, never block.
 	claudeRunning := proc.ClaudeRunning()
 
-	// Compute the patched identity up front, before swapping credentials, so a
-	// problem reading or splicing the config surfaces while the live state is
-	// still consistent rather than half-switched.
+	// Compute the patched config before swapping credentials so any error surfaces
+	// while the live state is still consistent.
 	newCfg, patchCfg := "", false
 	if cfg, ok := paths.ReadFileOpt(paths.ConfigFile); ok {
 		if o := profileOAuth(dir); o != "" {
@@ -533,33 +502,28 @@ func Switch(name string) error {
 		newCfg, patchCfg = cfg, true
 	}
 
-	// Snapshot the live creds so a hard failure in a later step can roll the
-	// swap back, never leaving live creds and cached identity disagreeing.
+	// Snapshot live creds so a later failure can roll back the swap.
 	prevLive, hadLive := store.TryReadCreds()
 	if err := store.WriteCreds(creds); err != nil {
 		return err
 	}
 
-	// Future-proofing: run any post-commit steps as a transaction. The config
-	// patch below is intentionally NOT in here — it is cached display identity
-	// that Claude Code refreshes from the token, so it stays best-effort. A new
-	// step that genuinely can't be left half-done belongs here, where a failure
-	// rolls the credential swap back.
-	var postCommit []func() error
-	for _, step := range postCommit {
-		if err := step(); err != nil {
-			if hadLive {
-				_ = store.WriteCreds(prevLive)
-			}
-			return fmt.Errorf("switch failed after writing credentials, rolled back: %w", err)
+	// Read back the credentials to confirm the write stuck — an AV scanner can
+	// revert the rename, a Keychain write can fail to take. On mismatch, roll the
+	// swap back rather than report a success that didn't happen. Compares the raw
+	// blob, not liveAccountID (that reads the not-yet-patched config). The config
+	// patch below is intentionally excluded — it's cached display identity that
+	// Claude Code refreshes from the token.
+	got, ok := store.TryReadCreds()
+	if !ok || strings.TrimSpace(string(got)) != strings.TrimSpace(string(creds)) {
+		if hadLive {
+			_ = store.WriteCreds(prevLive)
 		}
+		return fmt.Errorf("switch failed: credentials did not take, rolled back to the previous account")
 	}
 
-	// The credential swap (above) is the switch; the oauthAccount/userID in
-	// ~/.claude.json is just cached display identity that Claude Code refreshes
-	// from the token. So if this write fails we warn but don't fail the command,
-	// rather than leaving the user with a hard error after the real work landed.
-	// Defer the warning until after the result so every notice lands below it.
+	// Config patch is best-effort: Claude Code refreshes oauthAccount/userID from
+	// the token, so a failure here only warrants a warning.
 	var cfgErr error
 	if patchCfg {
 		cfgErr = paths.WriteFileAtomic(paths.ConfigFile, []byte(newCfg), 0o600)
@@ -569,8 +533,6 @@ func Switch(name string) error {
 		_ = paths.WriteFileAtomic(previousFile(), []byte(active), 0o600)
 	}
 
-	// Lead with the result so the account just switched to is unmistakable,
-	// then follow with the supporting notes.
 	email := emailOrUnknown(profileEmail(dir))
 	fmt.Printf("Switched to %q (%s).\n", name, email)
 	if resnapped {
