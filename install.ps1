@@ -29,4 +29,13 @@ if ($got -ne $want) { throw "checksum mismatch for ${asset}: expected $want, got
 Write-Host "Checksum verified."
 
 & $binPath register
-Remove-Item -Recurse -Force $tmp
+
+# Best-effort cleanup: Defender often still has the just-executed download open
+# to scan it, which makes an immediate delete fail with "in use by another
+# process". register has already succeeded by here, so a leftover temp file is
+# harmless - retry briefly, then leave it for the OS to reap rather than ending
+# on a scary error.
+for ($i = 0; $i -lt 10; $i++) {
+  try { Remove-Item -Recurse -Force $tmp -ErrorAction Stop; break }
+  catch { Start-Sleep -Milliseconds 300 }
+}

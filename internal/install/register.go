@@ -51,7 +51,22 @@ func Register() error {
 	}
 	dst := installedBinaryPath()
 	if !paths.PathEqual(self, dst) {
-		if err := paths.CopyFileAtomic(self, dst, 0o755); err != nil {
+		data, err := os.ReadFile(self)
+		if err != nil {
+			return fmt.Errorf("reading binary %s: %w", self, err)
+		}
+		// A plain atomic replace fails when the destination is a locked image:
+		// a previously installed claude-acc that is currently running, or one
+		// Windows Defender has open to scan. Windows refuses to overwrite such a
+		// file (ERROR_ACCESS_DENIED) but does allow renaming it aside, so for an
+		// existing destination we reuse the updater's move-aside dance; only a
+		// fresh install writes straight to the target.
+		if paths.FileExists(dst) {
+			err = ReplaceRunningBinary(dst, data, 0o755)
+		} else {
+			err = paths.WriteFileAtomic(dst, data, 0o755)
+		}
+		if err != nil {
 			return fmt.Errorf("copying binary to %s: %w", dst, err)
 		}
 	}

@@ -125,32 +125,31 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	return renameWithRetry(tmpName, path)
 }
 
-// renameWithRetry renames oldpath to newpath, retrying briefly on transient
-// failures. On Windows, antivirus (Windows Defender) opens a freshly written
-// executable to scan it the instant it lands on disk; the immediate rename then
-// fails with ERROR_ACCESS_DENIED until the scanner releases its handle, which
-// happens within a few hundred milliseconds. A plain os.Rename turns that race
-// into a hard install failure, so we retry with a short backoff. On Unix rename
-// does not hit this, so the first attempt almost always succeeds.
+// renameWithRetry renames oldpath to newpath, retrying on transient failures.
+// On Windows an on-access antivirus scanner opens a freshly written executable
+// to scan it the instant it lands on disk, holding a handle that lacks rename/
+// delete sharing rights; the immediate rename then fails with
+// ERROR_ACCESS_DENIED (or a sharing violation) until the scanner releases it. A
+// plain os.Rename turns that race into a hard install failure, so we retry with
+// a capped exponential backoff until a deadline. The window is generous because
+// third-party endpoint suites (e.g. Bitdefender Endpoint Security) do cloud
+// lookups and can hold the handle for many seconds — far longer than the
+// few hundred milliseconds Windows Defender typically takes. On Unix rename does
+// not hit this, so the first attempt succeeds and we never sleep.
 func renameWithRetry(oldpath, newpath string) error {
-	const attempts = 10
-	var err error
-	for i := 0; i < attempts; i++ {
-		if err = os.Rename(oldpath, newpath); err == nil {
-			return nil
+	const deadlineAfter = 30 * time.Second
+	deadline := time.Now().Add(deadlineAfter)
+	backoff := 50 * time.Millisecond
+	for {
+		err := os.Rename(oldpath, newpath)
+		if err == nil || time.Now().After(deadline) {
+			return err
 		}
-		time.Sleep(time.Duration(i+1) * 50 * time.Millisecond)
+		time.Sleep(backoff)
+		if backoff < time.Second {
+			backoff *= 2
+		}
 	}
-	return err
-}
-
-// CopyFileAtomic copies src to dst, writing dst atomically.
-func CopyFileAtomic(src, dst string, perm os.FileMode) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	return WriteFileAtomic(dst, data, perm)
 }
 
 // SelfPath returns the absolute path of the running binary with symlinks
