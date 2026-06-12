@@ -12,7 +12,8 @@ $asset = "claude-acc_windows_$arch.exe"
 $base  = "https://github.com/$repo/releases/latest/download"
 
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "claude-acc-install"
-New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue -LiteralPath $tmp
+New-Item -ItemType Directory -Path $tmp | Out-Null
 $binPath  = Join-Path $tmp $asset
 $sumsPath = Join-Path $tmp 'SHA256SUMS'
 
