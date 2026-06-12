@@ -86,7 +86,8 @@ type Command struct {
 	Name    string   // canonical name, e.g. "switch"
 	Aliases []string // alternative spellings, e.g. "use"; never shown in help
 	Usage   string   // the argument spec shown in help after the name, e.g. "[name|-]"
-	Summary string   // help description; may contain '\n' for curated line breaks
+	Summary string   // one-line description for the help list; may contain '\n' for curated breaks
+	Details string   // longer prose shown by `help <command>`; falls back to Summary when empty
 	Flags   []Flag   // accepted flags, offered when the partial word starts with '-'
 
 	// Complete, when set, computes this command's positional-argument
@@ -147,9 +148,16 @@ func New(name string) *App {
 			Run: func(c Ctx) error { return a.completionScript(c.Arg(0)) },
 		},
 		{
-			Name: "help", Aliases: []string{"--help", "-h", ""}, Meta: true,
-			Summary: "Show this help",
-			Run:     func(Ctx) error { a.Help(); return nil },
+			Name: "help", Aliases: []string{"--help", "-h", ""}, Usage: "[command]", Meta: true,
+			Summary:  "Show this help, or detailed help for one command",
+			Complete: Args(a.commandNames),
+			Run: func(c Ctx) error {
+				if name := c.Arg(0); name != "" {
+					return a.HelpCommand(name)
+				}
+				a.Help()
+				return nil
+			},
 		},
 		{
 			Name: "version", Aliases: []string{"--version", "-v"}, Meta: true,
@@ -266,4 +274,51 @@ func (a *App) Help() {
 			fmt.Printf("  - %s\n", n)
 		}
 	}
+	fmt.Printf("\nRun '%s help <command>' for details on a single command.\n", a.Name)
+}
+
+// HelpCommand prints detailed help for a single command — its usage, full
+// (possibly multi-line) summary, any aliases and any flags — or returns an error
+// if no such command is registered. It backs `<bin> help <command>`.
+func (a *App) HelpCommand(name string) error {
+	cmd := a.lookup(name)
+	if cmd == nil {
+		return fmt.Errorf("unknown command %q; run '%s help' for the full list", name, a.Name)
+	}
+	fmt.Printf("Usage: %s %s\n", a.Name, cmd.invocation())
+	if desc := cmd.Details; desc != "" {
+		fmt.Printf("\n%s\n", desc)
+	} else if cmd.Summary != "" {
+		fmt.Printf("\n%s\n", cmd.Summary)
+	}
+	// Skip the empty-string and dash aliases the built-ins use internally; only
+	// real alternative spellings are worth showing.
+	var aliases []string
+	for _, al := range cmd.Aliases {
+		if al != "" && !strings.HasPrefix(al, "-") {
+			aliases = append(aliases, al)
+		}
+	}
+	if len(aliases) > 0 {
+		fmt.Printf("\nAliases: %s\n", strings.Join(aliases, ", "))
+	}
+	if len(cmd.Flags) > 0 {
+		fmt.Println("\nFlags:")
+		for _, f := range cmd.Flags {
+			fmt.Printf("  %-14s %s\n", f.Name, f.Desc)
+		}
+	}
+	return nil
+}
+
+// commandNames is the ArgCompleter behind `help <command>`: every command a user
+// can ask for help on, i.e. the visible (non-Hidden) commands and built-ins.
+func (a *App) commandNames() ([]string, bool) {
+	var out []string
+	for _, c := range a.all() {
+		if !c.Hidden {
+			out = append(out, c.Name)
+		}
+	}
+	return out, false
 }

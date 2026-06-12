@@ -7,11 +7,12 @@
 // built-in `security` CLI for the Keychain; on Windows it edits the user PATH
 // directly in the registry during `register`. Nothing to install.
 //
-// This file is just the command-line front end: it declares the commands and
-// hands them to the internal/cli framework, which drives dispatch, help, and
-// shell completion from that one table. The work lives in the internal/
-// packages: profile (the account commands), store (credential I/O), install
-// (register/PATH), update (release version check), and paths (shared config).
+// This file is just the command-line front end: it assembles the command table
+// from each package's own Commands() and hands it to the internal/cli framework,
+// which drives dispatch, help, and shell completion from that one table. The
+// work — and each command's own declaration — lives in the internal/ packages:
+// profile (the account commands), store (credential I/O), install (register/
+// PATH), update (release version check), and paths (shared config).
 package main
 
 import (
@@ -49,103 +50,10 @@ func buildApp() *cli.App {
 		}
 	}
 
-	app.Add(
-		&cli.Command{
-			Name: "save", Usage: "[name]",
-			Summary: "Save the current account (defaults to its email as the name;\n" +
-				"updates the existing profile if this account is already saved)",
-			Run: func(c cli.Ctx) error { return profile.Save(c.Arg(0)) },
-		},
-		&cli.Command{
-			Name: "list", Aliases: []string{"ls"}, Usage: "[--json]",
-			Summary: "List saved profiles; * marks the active one",
-			Flags:   []cli.Flag{{Name: "--json", Desc: "Machine-readable output"}},
-			Run:     func(c cli.Ctx) error { return profile.List(c.Has("--json")) },
-		},
-		&cli.Command{
-			Name: "switch", Aliases: []string{"use"}, Usage: "[name|-]",
-			Summary: "Switch to a profile ('-' = previous; no name toggles\n" +
-				"between two saved profiles)",
-			Complete: cli.Args(profiles),
-			Run:      func(c cli.Ctx) error { return profile.Switch(c.Arg(0)) },
-		},
-		&cli.Command{
-			Name: "current", Aliases: []string{"whoami"}, Usage: "[--json]",
-			Summary: "Show the active account (profile / email / org / plan)",
-			Flags:   []cli.Flag{{Name: "--json", Desc: "Machine-readable output"}},
-			Run:     func(c cli.Ctx) error { return profile.Current(c.Has("--json")) },
-		},
-		&cli.Command{
-			Name: "remove", Aliases: []string{"rm"}, Usage: "<name>",
-			Summary:  "Delete a saved profile",
-			Complete: cli.Args(profiles),
-			Run:      func(c cli.Ctx) error { return profile.Remove(c.Arg(0)) },
-		},
-		&cli.Command{
-			Name: "rename", Aliases: []string{"mv"}, Usage: "<old> <new>",
-			Summary:  "Rename a saved profile",
-			Complete: cli.Args(profiles, profiles),
-			Run:      func(c cli.Ctx) error { return profile.Rename(c.Arg(0), c.Arg(1)) },
-		},
-		&cli.Command{
-			Name: "export", Usage: "<name|--all> [file] [--passphrase]",
-			Summary: "Export profile(s) to a portable bundle (stdout if no\n" +
-				"file); --passphrase encrypts it, else it is plaintext",
-			Flags: []cli.Flag{
-				{Name: "--all", Desc: "Export every saved profile"},
-				{Name: "--passphrase", Desc: "Encrypt the bundle"},
-			},
-			// The flag changes what the positionals mean, so this is a CompleteFunc
-			// rather than a fixed Args list: with --all the lone positional is the
-			// bundle file; otherwise it is <profile> then the file.
-			Complete: func(r cli.CompRequest) ([]string, bool) {
-				if r.Has("--all") {
-					return cli.Args(files)(r)
-				}
-				return cli.Args(profiles, files)(r)
-			},
-			Run: func(c cli.Ctx) error {
-				if c.Has("--all") {
-					return profile.Export("", true, c.Arg(0), c.Has("--passphrase"))
-				}
-				return profile.Export(c.Arg(0), false, c.Arg(1), c.Has("--passphrase"))
-			},
-		},
-		&cli.Command{
-			Name: "import", Usage: "<file> [--overwrite]",
-			Summary: "Import profiles from a bundle (--overwrite replaces\n" +
-				"existing ones)",
-			Flags:    []cli.Flag{{Name: "--overwrite", Desc: "Replace existing profiles"}},
-			Complete: cli.Args(files), // the bundle file
-			Run:      func(c cli.Ctx) error { return profile.Import(c.Arg(0), c.Has("--overwrite")) },
-		},
-		&cli.Command{
-			Name:    "register",
-			Summary: "Install '" + paths.Bin + "' onto your PATH for any shell",
-			Run:     func(cli.Ctx) error { return install.Register() },
-		},
-		&cli.Command{
-			Name: "unregister", Aliases: []string{"uninstall"},
-			Summary: "Remove it (add --purge to delete saved profiles too)",
-			Flags:   []cli.Flag{{Name: "--purge", Desc: "Also delete saved profiles"}},
-			Run:     func(c cli.Ctx) error { return install.Unregister(c.Has("--purge")) },
-		},
-		&cli.Command{
-			Name: "update", Aliases: []string{"upgrade", "self-update"}, Usage: "[--check]", Meta: true,
-			Summary: "Check for a newer release and show how to install it",
-			Flags: []cli.Flag{
-				{Name: "--check", Desc: "Only report whether an update is available"},
-				{Name: "--force", Desc: "Reinstall even if already current"},
-			},
-			Run: func(c cli.Ctx) error { return update.Update(c.Has("--check"), c.Has("--force")) },
-		},
-	)
+	// Each package declares its own commands next to their handlers; main just
+	// assembles them, in the order they should appear in help.
+	app.Add(profile.Commands()...)
+	app.Add(install.Commands()...)
+	app.Add(update.Commands()...)
 	return app
 }
-
-// profiles and files are this tool's per-argument completers, used with
-// cli.Args. profiles reads the saved profile list fresh on each call, so
-// completion always reflects what is on disk; files defers to the shell's own
-// filename completion.
-func profiles() ([]string, bool) { return profile.Names(), false }
-func files() ([]string, bool)    { return nil, true }
