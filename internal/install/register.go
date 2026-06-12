@@ -109,12 +109,16 @@ func Unregister(purge bool) error {
 		removeInstallDir(dir)
 	}
 
+	leftoverDir := ""
 	switch {
 	case removedBinary:
 		fmt.Printf("Unregistered '%s' (removed the installed binary and PATH entry).\n", paths.Bin)
 	case paths.FileExists(dst):
 		fmt.Printf("Unregistered '%s' (removed the PATH entry).\n", paths.Bin)
-		fmt.Printf("Could not delete the running binary; remove %s manually.\n", filepath.Dir(dst))
+		// The running .exe can't delete itself on Windows. This is the one step
+		// the user must do by hand, so defer it to the end and set it off on its
+		// own block instead of burying it between status lines.
+		leftoverDir = filepath.Dir(dst)
 	default:
 		fmt.Printf("Unregistered '%s' (removed the PATH entry; no installed binary was found).\n", paths.Bin)
 	}
@@ -131,6 +135,15 @@ func Unregister(purge bool) error {
 		}
 	} else {
 		fmt.Printf("Saved profiles kept at %s (run '%s unregister --purge' to delete them too).\n", paths.ProfileDir, paths.Bin)
+	}
+
+	// One manual step remains and it's easy to miss, so call it out last in its
+	// own visually separated block.
+	if leftoverDir != "" {
+		fmt.Println()
+		fmt.Println("  ACTION REQUIRED: the running binary could not delete itself.")
+		fmt.Printf("  Delete this folder manually to finish removing the tool:\n\n")
+		fmt.Printf("      %s\n\n", leftoverDir)
 	}
 	return nil
 }
