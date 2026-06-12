@@ -2,17 +2,21 @@
 
 package install
 
-// Windows tab-completion install: a marked block in the PowerShell profile that
-// sources `claude-acc completion powershell` at startup. The profile path is
-// resolved by asking PowerShell itself ($PROFILE.CurrentUserAllHosts), which
-// correctly accounts for a relocated (e.g. OneDrive) Documents folder and for
-// both Windows PowerShell 5.1 and PowerShell 7 being installed.
+// Windows tab-completion install: the completion script is written to a static
+// file and a marked block in the PowerShell profile dot-sources it at startup.
+// The profile path is resolved by asking PowerShell itself
+// ($PROFILE.CurrentUserAllHosts), which correctly accounts for a relocated (e.g.
+// OneDrive) Documents folder and for both Windows PowerShell 5.1 and PowerShell
+// 7 being installed.
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
+	"github.com/Samseys/anthropic-account-switcher/internal/cli"
 	"github.com/Samseys/anthropic-account-switcher/internal/paths"
 )
 
@@ -36,9 +40,35 @@ var powershellProfilePaths = func() []string {
 	return out
 }
 
-// loaderLine sources the live completion script every time PowerShell starts.
+// completionScriptPath is the file the completion script is written to and
+// dot-sourced from. It is a var so tests can redirect it off the real install
+// dir.
+var completionScriptPath = func() string {
+	return filepath.Join(installDir(), paths.Bin+".completion.ps1")
+}
+
+// loaderLine dot-sources the completion script file at PowerShell startup. We
+// write a static script and source it (guarded by Test-Path) rather than piping
+// `claude-acc completion powershell` into Invoke-Expression: executing live
+// command output at every shell start is a classic AMSI/antivirus red flag, and
+// the script defers to the binary at completion time so the file never goes
+// stale.
 func loaderLine() string {
-	return fmt.Sprintf("%s completion powershell | Out-String | Invoke-Expression", paths.Bin)
+	p := completionScriptPath()
+	return fmt.Sprintf("if (Test-Path '%s') { . '%s' }", p, p)
+}
+
+// writeCompletionScript materializes the PowerShell completion script to disk.
+func writeCompletionScript() error {
+	script, err := cli.CompletionScript(paths.Bin, "powershell")
+	if err != nil {
+		return err
+	}
+	p := completionScriptPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	return paths.WriteFileAtomic(p, []byte(script), 0o644)
 }
 
 // installCompletion enables PowerShell tab completion. Best-effort: it returns a
@@ -48,6 +78,9 @@ func installCompletion() (string, error) {
 	profiles := powershellProfilePaths()
 	if len(profiles) == 0 {
 		return fmt.Sprintf("Tab completion: add '%s' to your PowerShell $PROFILE.\n", loaderLine()), nil
+	}
+	if err := writeCompletionScript(); err != nil {
+		return "", fmt.Errorf("writing completion script: %w", err)
 	}
 	var configured, already []string
 	for _, p := range profiles {
@@ -72,9 +105,11 @@ func installCompletion() (string, error) {
 	}
 }
 
-// removeCompletion reverses installCompletion across every resolved profile.
+// removeCompletion reverses installCompletion across every resolved profile and
+// deletes the dot-sourced script file.
 func removeCompletion() {
 	for _, p := range powershellProfilePaths() {
 		removeMarkedBlock(p)
 	}
+	_ = os.Remove(completionScriptPath())
 }

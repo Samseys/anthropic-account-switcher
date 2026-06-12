@@ -153,6 +153,15 @@ func (a *App) completionScript(shell string) error {
 	return nil
 }
 
+// CompletionScript returns the static completion snippet for binName and shell.
+// It is exported so the installer can materialize the script to a file and
+// dot-source it from the shell startup file, rather than executing live command
+// output at every startup (which AMSI/antivirus flags). The script defers to the
+// running binary at completion time, so a file written once never goes stale.
+func CompletionScript(binName, shell string) (string, error) {
+	return (&App{Name: binName}).shellScript(shell)
+}
+
 // shellScript returns the completion snippet for the named shell.
 func (a *App) shellScript(shell string) (string, error) {
 	b := a.Name

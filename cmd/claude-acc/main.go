@@ -25,6 +25,9 @@ import (
 )
 
 func main() {
+	// Reap the stale "<binary>.old" left by a self-update, now that the process
+	// that locked it is gone (see install.SweepUpdateLeftovers).
+	install.SweepUpdateLeftovers()
 	if err := buildApp().Run(os.Args[1:]); err != nil {
 		paths.Die("%s", err)
 	}

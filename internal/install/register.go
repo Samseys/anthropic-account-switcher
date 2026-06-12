@@ -96,42 +96,37 @@ func Unregister(purge bool) error {
 	dir := installDir()
 
 	removedBinary := false
-	scheduledDelete := false
 	dst := installedBinaryPath()
 	if paths.FileExists(dst) {
 		self, _ := paths.SelfPath()
+		// Unix can unlink even its own running image (the inode lives on until
+		// the process exits). On Windows the running .exe is locked, so a binary
+		// unregistering itself cannot delete its own image; the message below
+		// tells the user to remove the folder, and a later run sweeps any
+		// leftover. We still delete here when the running binary is *not* the
+		// installed copy (e.g. unregistering from a downloaded build).
 		if !paths.PathEqual(self, dst) || runtime.GOOS != "windows" {
-			// Unix can unlink even its own running image; the inode lives on
-			// until the process exits.
 			if err := os.Remove(dst); err == nil {
 				removedBinary = true
 			}
-		} else if scheduleSelfDelete(dst) == nil {
-			// Windows locks a running exe; a detached helper deletes it the
-			// moment we exit.
-			scheduledDelete = true
 		}
 	}
 	_ = removeUserPath(dir)
 	removeCompletion()
 
-	// Clean up the install folder itself. The self-delete helper removes it
-	// once the locked binary is gone; here we cover the cases where the binary
+	// Clean up the install folder itself, covering the cases where the binary
 	// was deleted outright or was already absent. removeInstallDir only acts on
 	// the dedicated per-tool folder and only when it is empty.
-	if removedBinary || !scheduledDelete && !paths.FileExists(dst) {
+	if removedBinary || !paths.FileExists(dst) {
 		removeInstallDir(dir)
 	}
 
 	switch {
 	case removedBinary:
 		fmt.Printf("Unregistered '%s' (removed the installed binary and PATH entry).\n", paths.Bin)
-	case scheduledDelete:
-		fmt.Printf("Unregistered '%s' (removed the PATH entry).\n", paths.Bin)
-		fmt.Printf("The installed binary at %s will delete itself a moment after this command exits.\n", dst)
 	case paths.FileExists(dst):
 		fmt.Printf("Unregistered '%s' (removed the PATH entry).\n", paths.Bin)
-		fmt.Printf("Could not delete the installed binary; remove %s manually.\n", dst)
+		fmt.Printf("Could not delete the running binary; remove %s manually.\n", filepath.Dir(dst))
 	default:
 		fmt.Printf("Unregistered '%s' (removed the PATH entry; no installed binary was found).\n", paths.Bin)
 	}
@@ -150,6 +145,16 @@ func Unregister(purge bool) error {
 		fmt.Printf("Saved profiles kept at %s (run '%s unregister --purge' to delete them too).\n", paths.ProfileDir, paths.Bin)
 	}
 	return nil
+}
+
+// SweepUpdateLeftovers removes the "<binary>.old" file that ReplaceRunningBinary
+// leaves when it replaces the tool's own running image. Windows locks a running
+// .exe until the process holding it exits, so the stale copy cannot be deleted
+// in place; rather than spawn a background deleter (which reads as malware), we
+// reap it here on the next run. Best-effort and silent; a no-op on Unix, where
+// the file is never created.
+func SweepUpdateLeftovers() {
+	_ = os.Remove(installedBinaryPath() + ".old")
 }
 
 // removeInstallDir deletes the install folder, but only the dedicated per-tool

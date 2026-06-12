@@ -22,7 +22,12 @@ func withScratchProfiles(t *testing.T, names ...string) []string {
 	}
 	old := powershellProfilePaths
 	powershellProfilePaths = func() []string { return ps }
-	t.Cleanup(func() { powershellProfilePaths = old })
+	oldScript := completionScriptPath
+	completionScriptPath = func() string { return filepath.Join(dir, paths.Bin+".completion.ps1") }
+	t.Cleanup(func() {
+		powershellProfilePaths = old
+		completionScriptPath = oldScript
+	})
 	return ps
 }
 
