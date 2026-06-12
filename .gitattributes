@@ -1,3 +1,5 @@
+# Go source must stay LF or gofmt rewrites every file on Windows checkouts.
+*.go text eol=lf
 # Shell scripts must stay LF or /bin/sh chokes on the CRLF shebang.
 *.sh text eol=lf
 # PowerShell is happy with either; keep it CRLF on Windows checkouts.

@@ -15,8 +15,8 @@ func TestCompareVersions(t *testing.T) {
 		{"v1.0.0", "1.0.0", 0}, // leading v optional
 		{"2.0", "2.0.0", 0},    // missing patch == 0
 		{"1.0.0", "2.0.0", -1},
-		{"10.0.0", "9.0.0", 1},     // numeric, not lexical
-		{"1.0.0-rc1", "1.0.0", -1}, // a pre-release sorts below its release
+		{"10.0.0", "9.0.0", 1},                          // numeric, not lexical
+		{"1.0.0-rc1", "1.0.0", -1},                      // a pre-release sorts below its release
 		{"4.0.0-nightly.20260612.abc1234", "4.0.0", -1}, // so nightly users see the stable release as an update
 	}
 	for _, c := range cases {
