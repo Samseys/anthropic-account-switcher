@@ -37,7 +37,7 @@ func buildApp() *cli.App {
 	app.Version = paths.VersionString()
 	app.Tagline = "switch between Anthropic (Claude Code) accounts."
 	app.Notes = []string{
-		"A switch requires a full restart of Claude Code to take effect.",
+		"Claude Code picks up the switch on its next request; no restart needed.",
 		"Switching re-saves the account you are leaving, so its tokens stay fresh.",
 	}
 	// After a normal command succeeds, nudge about a new version at most once a
@@ -65,7 +65,7 @@ func buildApp() *cli.App {
 		&cli.Command{
 			Name: "switch", Aliases: []string{"use"}, Usage: "[name|-]",
 			Summary: "Switch to a profile ('-' = previous; no name toggles\n" +
-				"between two saved profiles), then restart Claude Code",
+				"between two saved profiles)",
 			Complete: cli.Args(profiles),
 			Run:      func(c cli.Ctx) error { return profile.Switch(c.Arg(0)) },
 		},

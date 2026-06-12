@@ -506,20 +506,18 @@ func Switch(name string) error {
 
 	// Claude Code rotates tokens in place, so the snapshot of the account we
 	// are leaving goes stale; re-save it (best effort) before overwriting.
+	// Defer the message until after the switch so the result leads the output.
+	resnapped := false
 	if active != "" {
 		if _, err := snapshot(active, true); err == nil {
-			fmt.Printf("Updated profile %q with the current tokens before switching.\n", active)
+			resnapped = true
 		}
 	}
 
 	// A live Claude Code session can rewrite .credentials.json on a token
-	// refresh and clobber the swap. Warn loudly but never block: detection is
-	// heuristic, so a false positive must not stop the user.
-	if proc.ClaudeRunning() {
-		fmt.Fprintln(os.Stderr, "WARNING: Claude Code appears to be running. It may overwrite the")
-		fmt.Fprintln(os.Stderr, "credentials on a token refresh and undo this switch. Fully quit it first,")
-		fmt.Fprintln(os.Stderr, "then re-run if the switch doesn't take effect after restarting.")
-	}
+	// refresh and clobber the swap. Detection is heuristic, so we only warn
+	// (below, after the switch lands) and never block on a false positive.
+	claudeRunning := proc.ClaudeRunning()
 
 	// Compute the patched identity up front, before swapping credentials, so a
 	// problem reading or splicing the config surfaces while the live state is
@@ -561,20 +559,31 @@ func Switch(name string) error {
 	// ~/.claude.json is just cached display identity that Claude Code refreshes
 	// from the token. So if this write fails we warn but don't fail the command,
 	// rather than leaving the user with a hard error after the real work landed.
+	// Defer the warning until after the result so every notice lands below it.
+	var cfgErr error
 	if patchCfg {
-		if err := paths.WriteFileAtomic(paths.ConfigFile, []byte(newCfg), 0o600); err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: switched credentials but could not update cached identity in %s (Claude Code will refresh it on restart): %v\n", paths.ConfigFile, err)
-		}
+		cfgErr = paths.WriteFileAtomic(paths.ConfigFile, []byte(newCfg), 0o600)
 	}
 
 	if active != "" {
 		_ = paths.WriteFileAtomic(previousFile(), []byte(active), 0o600)
 	}
 
+	// Lead with the result so the account just switched to is unmistakable,
+	// then follow with the supporting notes.
 	email := emailOrUnknown(profileEmail(dir))
-	fmt.Printf("Switched to %q (%s).\n\n", name, email)
-	fmt.Println("IMPORTANT: fully quit Claude Code and reopen it for the new account to take")
-	fmt.Println("effect. The current session is still authenticated as the previous account.")
+	fmt.Printf("Switched to %q (%s).\n", name, email)
+	if resnapped {
+		fmt.Printf("\nSaved %q's current tokens before switching.\n", active)
+	}
+	if cfgErr != nil {
+		fmt.Fprintf(os.Stderr, "\nWARNING: switched credentials but could not update cached identity in %s (Claude Code will refresh it on its next request): %v\n", paths.ConfigFile, cfgErr)
+	}
+	if claudeRunning {
+		fmt.Fprintln(os.Stderr, "\nWARNING: Claude Code looks like it's running. A live session can overwrite")
+		fmt.Fprintln(os.Stderr, "these credentials on its next token refresh and undo the switch. Quit it if")
+		fmt.Fprintln(os.Stderr, "the new account doesn't stick.")
+	}
 	return nil
 }
 

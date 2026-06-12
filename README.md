@@ -72,7 +72,7 @@ Or `go install github.com/Samseys/anthropic-account-switcher@latest`.
 ```
 claude-acc save [name]         # save the current account (defaults to its email)
 claude-acc list [--json]       # list saved profiles; * marks the active one
-claude-acc switch [name|-]     # switch to a profile, then restart Claude Code
+claude-acc switch [name|-]     # switch to a profile
 claude-acc current [--json]    # show the active account
 claude-acc remove <name>       # delete a saved profile
 claude-acc rename <old> <new>  # rename a saved profile
@@ -96,11 +96,12 @@ claude-acc save work
 claude-acc save personal
 
 # from now on:
-claude-acc switch          # then fully quit + reopen Claude Code
+claude-acc switch          # the new account is used on Claude Code's next request
 ```
 
-**A switch requires a full restart of Claude Code** — the running session holds
-the active credentials in memory.
+No restart needed — Claude Code re-reads the credentials on its next request. If
+a session is already running, quit it only if the switch doesn't stick: a live
+session can overwrite the swapped credentials on its next token refresh.
 
 ## How it works
 
