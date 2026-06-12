@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# A newer push to main supersedes an in-flight run (incl. its nightly publish).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -32,13 +37,61 @@ jobs:
       - name: Test
         run: go test ./...
 
-      # The OS-specific build tags mean a single-platform build doesn't prove
-      # the others compile; check every release target.
+      # The OS-specific build tags mean a single-platform build doesn't prove the
+      # others compile. On PRs we have no nightly job, so check every target here.
+      # On a push to main the nightly job's `make dist` is the cross-compile proof,
+      # so this redundant check is skipped.
       - name: Cross-compile check
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && github.event_name == 'pull_request'
         env:
           CGO_ENABLED: 0
         run: |
           for t in windows/amd64 windows/arm64 darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
             GOOS="${t%/*}" GOARCH="${t#*/}" go build -o /dev/null ./cmd/claude-acc
           done
+
+  # Rolling pre-release built from main on every push, gated on `test`. It is
+  # intentionally a *prerelease*: GitHub's releases/latest (used by
+  # `claude-acc update` and both installers) skips prereleases, so nightly never
+  # reaches stable users. A single rolling "nightly" tag is reused (deleted and
+  # recreated) rather than one tag per commit, so the releases page stays clean
+  # and we don't flood AV reputation systems with many distinct unsigned binaries.
+  nightly:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # need tags to derive a version from the latest release
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: false
+
+      - name: Derive version
+        id: ver
+        run: |
+          base="$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)"
+          echo "version=${base}-nightly.$(date -u +%Y%m%d%H%M%S).${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-compile
+        run: make dist VERSION="${{ steps.ver.outputs.version }}"
+
+      - name: Publish rolling nightly prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          # Move the rolling tag to this commit by recreating the release.
+          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+          gh release create nightly dist/* \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Nightly ($VERSION)" \
+            --notes "Automated build of \`$GITHUB_SHA\` ($VERSION).
+
+          This is a **pre-release**. The installers and \`claude-acc update\` track stable releases only, so they will not pick this up. Download an asset below to try the latest main."
