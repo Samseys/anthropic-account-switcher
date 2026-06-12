@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"time"
 )
 
 // Bin is the tool's binary/command name.
@@ -121,7 +122,26 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	}
 	// Best effort: chmod is meaningful on Unix, a near no-op on Windows.
 	_ = os.Chmod(tmpName, perm)
-	return os.Rename(tmpName, path)
+	return renameWithRetry(tmpName, path)
+}
+
+// renameWithRetry renames oldpath to newpath, retrying briefly on transient
+// failures. On Windows, antivirus (Windows Defender) opens a freshly written
+// executable to scan it the instant it lands on disk; the immediate rename then
+// fails with ERROR_ACCESS_DENIED until the scanner releases its handle, which
+// happens within a few hundred milliseconds. A plain os.Rename turns that race
+// into a hard install failure, so we retry with a short backoff. On Unix rename
+// does not hit this, so the first attempt almost always succeeds.
+func renameWithRetry(oldpath, newpath string) error {
+	const attempts = 10
+	var err error
+	for i := 0; i < attempts; i++ {
+		if err = os.Rename(oldpath, newpath); err == nil {
+			return nil
+		}
+		time.Sleep(time.Duration(i+1) * 50 * time.Millisecond)
+	}
+	return err
 }
 
 // CopyFileAtomic copies src to dst, writing dst atomically.
