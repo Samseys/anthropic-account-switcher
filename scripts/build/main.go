@@ -57,13 +57,14 @@ func main() {
 	}
 }
 
-// version derives a version from git (nearest tag + commit, "-dirty" when the
-// tree has uncommitted changes), or "dev" outside a checkout. $VERSION overrides.
+// version derives a version from git describe, or "dev" outside a checkout.
+// $VERSION overrides. --match prevents non-release tags (e.g. "nightly") from
+// being used as the base.
 func version() string {
 	if v := strings.TrimSpace(os.Getenv("VERSION")); v != "" {
 		return strings.TrimPrefix(v, "v")
 	}
-	out, err := exec.Command("git", "describe", "--tags", "--always", "--dirty").Output()
+	out, err := exec.Command("git", "describe", "--tags", "--always", "--dirty", "--match", "v[0-9]*").Output()
 	v := strings.TrimSpace(string(out))
 	if err != nil || v == "" {
 		return "dev"
@@ -71,12 +72,10 @@ func version() string {
 	return strings.TrimPrefix(v, "v")
 }
 
-// versionPkg is the package whose Version var the linker stamps at build time.
 const versionPkg = "github.com/Samseys/anthropic-account-switcher/internal/paths"
 
-// ldflags stamps the version. We intentionally do NOT pass -s -w: stripping the
-// symbol table and DWARF makes a Go binary look packed/obfuscated to antivirus
-// heuristics, a needless false-positive trigger for an unsigned tool.
+// ldflags stamps the version. -s/-w are intentionally omitted: stripping DWARF
+// makes an unsigned binary look obfuscated to antivirus heuristics.
 func ldflags() string { return "-X " + versionPkg + ".Version=" + version() }
 
 func exeSuffix(goos string) string {
@@ -86,7 +85,7 @@ func exeSuffix(goos string) string {
 	return ""
 }
 
-// goBuild compiles pkg for the given GOOS/GOARCH (empty = host) to out.
+// goBuild compiles pkg for GOOS/GOARCH (empty = host) into out.
 func goBuild(goos, goarch, out string) error {
 	c := exec.Command("go", "build", "-trimpath", "-ldflags", ldflags(), "-o", out, pkg)
 	c.Stdout, c.Stderr = os.Stdout, os.Stderr
@@ -97,15 +96,12 @@ func goBuild(goos, goarch, out string) error {
 	return c.Run()
 }
 
-// goversioninfoPkg is pinned (v1.4.1 has every flag we use). It generates the
-// Windows VERSIONINFO resource that gives the .exe a real identity.
+// goversioninfoPkg is pinned so we use flags available in that specific release.
 const goversioninfoPkg = "github.com/josephspurrier/goversioninfo/cmd/goversioninfo@v1.4.1"
 
-// buildTarget compiles one GOOS/GOARCH to out. For Windows it first generates a
-// versioninfo resource (.syso) next to the main package so the linker embeds
-// file metadata (company, product, version) and an app manifest into the .exe:
-// an unsigned, metadata-less binary is a common antivirus false-positive
-// trigger. The .syso is removed afterward so it never lingers in the tree.
+// buildTarget compiles one GOOS/GOARCH into out. On Windows it first generates
+// a .syso resource (file metadata + app manifest) so the linker embeds them —
+// a metadata-less unsigned binary is a common antivirus false-positive.
 func buildTarget(goos, goarch, out string) error {
 	if goos == "windows" {
 		syso, err := genWindowsResource(goarch)
@@ -117,11 +113,9 @@ func buildTarget(goos, goarch, out string) error {
 	return goBuild(goos, goarch, out)
 }
 
-// genWindowsResource writes cmd/acc-claude/resource_windows_<arch>.syso, which Go
-// links automatically when building that GOARCH (the _windows_<arch> suffix acts
-// as a build constraint). It stamps the build version and reads static metadata
-// from versioninfo.json plus the app manifest. The first call fetches the pinned
-// goversioninfo (needs network, as the release CI has).
+// genWindowsResource writes cmd/acc-claude/resource_windows_<arch>.syso (the
+// _windows_<arch> suffix acts as a Go build constraint). Fetches goversioninfo
+// on first call (requires network access, as CI has).
 func genWindowsResource(arch string) (string, error) {
 	maj, min, patch := semverParts(version())
 	dir := filepath.Join("cmd", "acc-claude")
@@ -149,9 +143,8 @@ func genWindowsResource(arch string) (string, error) {
 	return out, c.Run()
 }
 
-// semverParts pulls major/minor/patch ints out of a version string (a leading
-// "v" and any -prerelease/+build suffix are ignored); missing parts are 0, so a
-// non-numeric version like "dev" yields 0.0.0 for the numeric FixedFileInfo.
+// semverParts extracts major/minor/patch from a version string; missing or
+// non-numeric parts (e.g. "dev") default to 0.
 func semverParts(v string) (maj, min, patch int) {
 	v = strings.TrimPrefix(v, "v")
 	if i := strings.IndexAny(v, "-+"); i >= 0 {
@@ -216,8 +209,7 @@ func dist() error {
 	return nil
 }
 
-// writeSums writes a coreutils-style SHA256SUMS manifest ("<hex>  <name>"),
-// matching what `sha256sum` produces and what the install scripts verify against.
+// writeSums writes a SHA256SUMS manifest in the format `sha256sum` produces.
 func writeSums(dir string, names []string) error {
 	sort.Strings(names)
 	var b strings.Builder

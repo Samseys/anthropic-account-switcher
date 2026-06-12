@@ -1,10 +1,6 @@
-// Package update checks the GitHub Releases API for a newer version and, when
-// one exists, tells the user how to install it by re-running the installer. It
-// deliberately does NOT download or overwrite the running binary itself: a
-// program that fetches an executable from the internet and rewrites its own
-// image on disk is the textbook dropper shape that endpoint security flags, so
-// file placement is left entirely to the installer scripts. MaybeNotify is the
-// passive "a new version is available" nudge.
+// Package update checks the GitHub Releases API for a newer version and tells
+// the user how to upgrade via the installer. It never downloads or replaces the
+// running binary (that dropper shape is what endpoint security flags).
 package update
 
 import (
@@ -15,17 +11,16 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/semver"
 
 	"github.com/Samseys/anthropic-account-switcher/internal/paths"
 )
 
 const repo = "Samseys/anthropic-account-switcher"
 
-// installCommand returns the one-line installer invocation for the current OS,
-// shown by Update so the user can upgrade by re-running it.
 func installCommand() string {
 	const base = "https://raw.githubusercontent.com/" + repo + "/main"
 	if runtime.GOOS == "windows" {
@@ -44,8 +39,7 @@ func httpGet(url string, timeout time.Duration) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// GitHub rejects requests without a User-Agent.
-	req.Header.Set("User-Agent", paths.Bin+"/"+paths.VersionString())
+	req.Header.Set("User-Agent", paths.Bin+"/"+paths.VersionString()) // required by GitHub
 	req.Header.Set("Accept", "application/vnd.github+json")
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
@@ -79,60 +73,22 @@ func fetchLatestRelease(timeout time.Duration) (*ghRelease, error) {
 	return &rel, nil
 }
 
-// compareVersions returns -1 if a < b, 0 if equal, +1 if a > b. It parses up to
-// three dotted numeric components (a leading "v" is ignored); anything it can't
-// parse numerically falls back to a string compare so we still detect a change.
+// compareVersions returns -1/0/+1 via semver order (leading "v" optional).
+// Pre-releases sort below their release, so nightly builds see the stable as newer.
 func compareVersions(a, b string) int {
-	na, oka := parseSemver(a)
-	nb, okb := parseSemver(b)
-	if !oka || !okb {
-		switch {
-		case a == b:
-			return 0
-		case a < b:
-			return -1
-		default:
-			return 1
-		}
-	}
-	for i := range 3 {
-		if na[i] != nb[i] {
-			if na[i] < nb[i] {
-				return -1
-			}
-			return 1
-		}
-	}
-	return 0
+	return semver.Compare(canonV(a), canonV(b))
 }
 
-func parseSemver(s string) ([3]int, bool) {
-	var out [3]int
-	s = strings.TrimPrefix(strings.TrimSpace(s), "v")
-	// Drop any pre-release/build suffix (e.g. "1.2.3-rc1").
-	if i := strings.IndexAny(s, "-+"); i >= 0 {
-		s = s[:i]
+func canonV(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "v") {
+		s = "v" + s
 	}
-	parts := strings.Split(s, ".")
-	if len(parts) == 0 || len(parts) > 3 {
-		return out, false
-	}
-	for i, p := range parts {
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			return out, false
-		}
-		out[i] = n
-	}
-	return out, true
+	return s
 }
 
-// Update checks for a newer release and, if one exists, prints the one-line
-// installer command to run. It never downloads or replaces the running binary
-// itself; upgrading re-runs the installer, which places the new binary the same
-// way the first install did. checkOnly and force are accepted for CLI
-// compatibility: there is no longer a self-installing path for checkOnly to
-// suppress, and force only bypasses the "already up to date" short-circuit.
+// Update prints the installer command if a newer release exists.
+// checkOnly is accepted for CLI compatibility; force bypasses the "already up to date" check.
 func Update(checkOnly, force bool) error {
 	current := paths.VersionString()
 	fmt.Printf("Current version: %s\n", current)
@@ -158,8 +114,6 @@ func Update(checkOnly, force bool) error {
 	return nil
 }
 
-// ---- passive "update available" nudge ----
-
 const updateCheckInterval = 24 * time.Hour
 
 type updateCheck struct {
@@ -171,19 +125,15 @@ func updateCheckPath() string {
 	return filepath.Join(paths.ProfileDir, ".update-check.json")
 }
 
-// MaybeNotify prints a one-line "new version available" hint to stderr. The
-// hint fires on *every* command (the caller already excludes --json), but the
-// network check that feeds it is throttled to once per updateCheckInterval: the
-// warning is driven by the last-known "latest" recorded in the cache, not by
-// whether a check happened on this run. It is best-effort and silent on any
-// failure — never disrupting the command the user actually ran.
+// MaybeNotify prints a one-line hint to stderr when a newer version is cached.
+// The network refresh is throttled to once per updateCheckInterval; failures are silent.
 func MaybeNotify() {
 	if os.Getenv("ACC_CLAUDE_NO_UPDATE_CHECK") != "" {
 		return
 	}
 	current := paths.VersionString()
 	if current == "dev" {
-		return // local build; nothing to compare against
+		return
 	}
 
 	refreshLatestIfStale()
@@ -198,11 +148,8 @@ func MaybeNotify() {
 	}
 }
 
-// refreshLatestIfStale re-queries the Releases API at most once per
-// updateCheckInterval, recording the result and the time in the cache. A failed
-// fetch writes nothing — the cache (and so the throttle) only advances on
-// success. The warning still fires from the last-known "latest"; an offline
-// user who finds the retries bothersome can set ACC_CLAUDE_NO_UPDATE_CHECK=1.
+// refreshLatestIfStale re-queries the API at most once per updateCheckInterval.
+// A failed fetch writes nothing, so the throttle only advances on success.
 func refreshLatestIfStale() {
 	c, _ := readUpdateCheck()
 	if time.Since(time.Unix(c.CheckedAt, 0)) <= updateCheckInterval {
@@ -215,8 +162,6 @@ func refreshLatestIfStale() {
 	writeUpdateCheck(strings.TrimPrefix(rel.TagName, "v"))
 }
 
-// lastKnownLatest returns the most recent "latest" version recorded in the
-// cache, regardless of age, or "" if there is no usable cache yet.
 func lastKnownLatest() string {
 	c, _ := readUpdateCheck()
 	return c.Latest
