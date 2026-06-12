@@ -44,11 +44,13 @@ func profilePath(name string) string {
 
 // resolveProfile is the single entry point for commands that operate on an
 // existing profile. It returns the canonical (sanitized) name and its directory,
-// erroring with the available-profiles hint when no such profile exists. Callers
-// must reject an empty name first: Sanitize("") is "", which maps to ProfileDir.
+// erroring with the available-profiles hint when no such profile exists. An empty
+// name is rejected up front: Sanitize("") is "", which maps to ProfileDir itself,
+// so profileExists("") would spuriously succeed (the dir exists) and point a
+// command at the profiles root instead of a profile.
 func resolveProfile(name string) (string, string, error) {
 	name = paths.Sanitize(name)
-	if !profileExists(name) {
+	if name == "" || !profileExists(name) {
 		return "", "", errNoProfile(name)
 	}
 	return name, profilePath(name), nil
