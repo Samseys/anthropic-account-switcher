@@ -1,5 +1,5 @@
 // Package lock provides a cross-process advisory lock guarding the profile
-// directory, so two concurrent claude-acc invocations can't interleave a
+// directory, so two concurrent acc-claude invocations can't interleave a
 // credential write with a config patch, or race two saves against the same
 // profile directory.
 //
@@ -47,7 +47,7 @@ func lockPath() string {
 // Acquire takes the profile-directory lock and returns a release function the
 // caller must defer. It retries briefly on contention and steals a stale lock
 // (dead PID on this host, or one older than ~30s). On sustained contention it
-// fails with a "another claude-acc is running" error.
+// fails with a "another acc-claude is running" error.
 func Acquire() (func(), error) {
 	if err := os.MkdirAll(paths.ProfileDir, 0o755); err != nil {
 		return nil, err

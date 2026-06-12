@@ -49,7 +49,7 @@ var completionScriptPath = func() string {
 
 // loaderLine dot-sources the completion script file at PowerShell startup. We
 // write a static script and source it (guarded by Test-Path) rather than piping
-// `claude-acc completion powershell` into Invoke-Expression: executing live
+// `acc-claude completion powershell` into Invoke-Expression: executing live
 // command output at every shell start is a classic AMSI/antivirus red flag, and
 // the script defers to the binary at completion time so the file never goes
 // stale.

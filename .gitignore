@@ -20,8 +20,8 @@ desktop.ini
 # Build output
 /dist/
 /bin/
-/claude-acc
-/claude-acc.exe
+/acc-claude
+/acc-claude.exe
 
 # Generated Windows version-info resources (produced during the build by
 # scripts/build from versioninfo.json; never checked in)

@@ -1,4 +1,4 @@
-# claude-acc
+# acc-claude
 
 Switch between multiple Anthropic accounts in Claude Code. A single static
 binary — no Node, Python, or PowerShell modules.
@@ -26,12 +26,12 @@ Open a new terminal afterwards so the `PATH` change applies.
 ### Nightly builds
 
 Every push to `main` publishes a rolling [`nightly`](https://github.com/Samseys/anthropic-account-switcher/releases/tag/nightly)
-pre-release. It is opt-in: `claude-acc update` and the default installer always
+pre-release. It is opt-in: `acc-claude update` and the default installer always
 track stable releases, so you never get nightly by accident. To install it:
 
 ```powershell
 # Windows (PowerShell)
-$env:CLAUDE_ACC_NIGHTLY = '1'; irm https://raw.githubusercontent.com/Samseys/anthropic-account-switcher/main/install.ps1 | iex
+$env:ACC_CLAUDE_NIGHTLY = '1'; irm https://raw.githubusercontent.com/Samseys/anthropic-account-switcher/main/install.ps1 | iex
 ```
 
 ```bash
@@ -46,26 +46,26 @@ Download the binary for your platform from the
 
 | Platform        | Asset                          |
 | --------------- | ------------------------------ |
-| Windows x64     | `claude-acc_windows_amd64.exe` |
-| Windows ARM64   | `claude-acc_windows_arm64.exe` |
-| macOS Intel     | `claude-acc_darwin_amd64`      |
-| macOS Apple Si. | `claude-acc_darwin_arm64`      |
-| Linux x64       | `claude-acc_linux_amd64`       |
-| Linux ARM64     | `claude-acc_linux_arm64`       |
+| Windows x64     | `acc-claude_windows_amd64.exe` |
+| Windows ARM64   | `acc-claude_windows_arm64.exe` |
+| macOS Intel     | `acc-claude_darwin_amd64`      |
+| macOS Apple Si. | `acc-claude_darwin_arm64`      |
+| Linux x64       | `acc-claude_linux_amd64`       |
+| Linux ARM64     | `acc-claude_linux_arm64`       |
 
 Then run `register` to copy the binary to a per-user location and add it to
 your `PATH`:
 
 ```bash
 # macOS / Linux
-mv claude-acc_darwin_arm64 claude-acc && chmod +x claude-acc
-./claude-acc register
+mv acc-claude_darwin_arm64 acc-claude && chmod +x acc-claude
+./acc-claude register
 
 # Windows (PowerShell)
-.\claude-acc_windows_amd64.exe register
+.\acc-claude_windows_amd64.exe register
 ```
 
-- **Windows** — installs to `%LOCALAPPDATA%\claude-acc\`. Open a new terminal.
+- **Windows** — installs to `%LOCALAPPDATA%\acc-claude\`. Open a new terminal.
 - **macOS / Linux** — installs to `~/.local/bin/` and adds a `PATH` line to your
   shell rc if needed.
 
@@ -86,33 +86,33 @@ Or `go install github.com/Samseys/anthropic-account-switcher@latest`.
 ## Usage
 
 ```
-claude-acc save [name]         # save the current account (defaults to its email)
-claude-acc list [--json]       # list saved profiles; * marks the active one
-claude-acc switch [name|-]     # switch to a profile
-claude-acc current [--json]    # show the active account
-claude-acc remove <name>       # delete a saved profile
-claude-acc rename <old> <new>  # rename a saved profile
-claude-acc register            # install onto your PATH
-claude-acc unregister          # remove it (--purge also deletes saved profiles)
-claude-acc update [--check]    # check for a newer release and show how to install it
-claude-acc help
+acc-claude save [name]         # save the current account (defaults to its email)
+acc-claude list [--json]       # list saved profiles; * marks the active one
+acc-claude switch [name|-]     # switch to a profile
+acc-claude current [--json]    # show the active account
+acc-claude remove <name>       # delete a saved profile
+acc-claude rename <old> <new>  # rename a saved profile
+acc-claude register            # install onto your PATH
+acc-claude unregister          # remove it (--purge also deletes saved profiles)
+acc-claude update [--check]    # check for a newer release and show how to install it
+acc-claude help
 ```
 
-`switch` shortcuts: with exactly two profiles, a bare `claude-acc switch`
-toggles to the other; `claude-acc switch -` returns to the previously active
+`switch` shortcuts: with exactly two profiles, a bare `acc-claude switch`
+toggles to the other; `acc-claude switch -` returns to the previously active
 profile. `--json` makes `list`/`current` scriptable.
 
 ### First-time setup
 
 ```
 # while logged in as account A
-claude-acc save work
+acc-claude save work
 
 # log out, log in as account B, then:
-claude-acc save personal
+acc-claude save personal
 
 # from now on:
-claude-acc switch          # the new account is used on Claude Code's next request
+acc-claude switch          # the new account is used on Claude Code's next request
 ```
 
 No restart needed — Claude Code re-reads the credentials on its next request. If

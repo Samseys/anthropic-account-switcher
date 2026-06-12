@@ -1,10 +1,10 @@
 #!/bin/sh
-# One-line installer for claude-acc on macOS and Linux.
+# One-line installer for acc-claude on macOS and Linux.
 #   curl -fsSL https://raw.githubusercontent.com/Samseys/anthropic-account-switcher/main/install.sh | sh
 #
 # To install the rolling nightly pre-release instead of the latest stable
 # release, set the env var or pass --nightly:
-#   curl -fsSL https://.../install.sh | CLAUDE_ACC_NIGHTLY=1 sh
+#   curl -fsSL https://.../install.sh | ACC_CLAUDE_NIGHTLY=1 sh
 #   curl -fsSL https://.../install.sh | sh -s -- --nightly
 #
 # Downloads the selected release binary, verifies it against the published
@@ -29,11 +29,11 @@ case "$arch" in
   *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
 esac
 
-asset="claude-acc_${os}_${arch}"
+asset="acc-claude_${os}_${arch}"
 
 # Nightly is an opt-in rolling pre-release; everyone else tracks latest stable.
 channel="latest"
-if [ "${CLAUDE_ACC_NIGHTLY:-}" = "1" ] || [ "${1:-}" = "--nightly" ] || [ "${1:-}" = "-n" ]; then
+if [ "${ACC_CLAUDE_NIGHTLY:-}" = "1" ] || [ "${1:-}" = "--nightly" ] || [ "${1:-}" = "-n" ]; then
   channel="nightly"
   base="https://github.com/${repo}/releases/download/nightly"
 else
@@ -63,9 +63,9 @@ if [ "$got" != "$want" ]; then
 fi
 echo "Checksum verified."
 
-# Install location must match the Go installDir(): ~/.local/bin/claude-acc.
+# Install location must match the Go installDir(): ~/.local/bin/acc-claude.
 dir="${HOME}/.local/bin"
-dest="${dir}/claude-acc"
+dest="${dir}/acc-claude"
 mkdir -p "$dir"
 cp "${tmp}/${asset}" "$dest"
 chmod 0755 "$dest"

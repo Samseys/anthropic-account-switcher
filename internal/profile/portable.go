@@ -18,7 +18,7 @@ import (
 
 // passEnv lets callers supply the export/import passphrase non-interactively
 // (and keep it out of shell history); prompting is the fallback.
-const passEnv = "CLAUDE_ACC_PASSPHRASE"
+const passEnv = "ACC_CLAUDE_PASSPHRASE"
 
 // bundleVersion is the on-disk format version of an export bundle.
 const bundleVersion = 1
@@ -286,7 +286,7 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-// readPassphrase returns the bundle passphrase from $CLAUDE_ACC_PASSPHRASE, or
+// readPassphrase returns the bundle passphrase from $ACC_CLAUDE_PASSPHRASE, or
 // prompts for it. When confirm is set (export), it asks twice and checks they
 // match. The prompt echoes input, so the env var is the recommended path.
 func readPassphrase(confirm bool) (string, error) {

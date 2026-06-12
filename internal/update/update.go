@@ -178,7 +178,7 @@ func updateCheckPath() string {
 // whether a check happened on this run. It is best-effort and silent on any
 // failure — never disrupting the command the user actually ran.
 func MaybeNotify() {
-	if os.Getenv("CLAUDE_ACC_NO_UPDATE_CHECK") != "" {
+	if os.Getenv("ACC_CLAUDE_NO_UPDATE_CHECK") != "" {
 		return
 	}
 	current := paths.VersionString()
@@ -202,7 +202,7 @@ func MaybeNotify() {
 // updateCheckInterval, recording the result and the time in the cache. A failed
 // fetch writes nothing — the cache (and so the throttle) only advances on
 // success. The warning still fires from the last-known "latest"; an offline
-// user who finds the retries bothersome can set CLAUDE_ACC_NO_UPDATE_CHECK=1.
+// user who finds the retries bothersome can set ACC_CLAUDE_NO_UPDATE_CHECK=1.
 func refreshLatestIfStale() {
 	c, _ := readUpdateCheck()
 	if time.Since(time.Unix(c.CheckedAt, 0)) <= updateCheckInterval {

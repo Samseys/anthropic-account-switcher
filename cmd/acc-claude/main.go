@@ -1,4 +1,4 @@
-// Command claude-acc switches between multiple Anthropic (Claude Code)
+// Command acc-claude switches between multiple Anthropic (Claude Code)
 // accounts. It snapshots the OAuth credentials and the cached identity
 // (oauthAccount + userID in ~/.claude.json) into named profiles and restores
 // them on demand.

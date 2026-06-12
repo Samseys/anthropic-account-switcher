@@ -18,8 +18,8 @@ func ClaudeRunning() bool {
 }
 
 // mentionsClaude reports whether s names Claude Code while excluding this tool
-// itself (claude-acc), whose own name would otherwise always match.
+// itself (acc-claude), whose own name would otherwise always match.
 func mentionsClaude(s string) bool {
 	s = strings.ToLower(s)
-	return strings.Contains(s, "claude") && !strings.Contains(s, "claude-acc")
+	return strings.Contains(s, "claude") && !strings.Contains(s, "acc-claude")
 }

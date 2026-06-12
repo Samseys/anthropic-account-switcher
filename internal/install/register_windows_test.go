@@ -20,7 +20,7 @@ import (
 func TestRegisterUnregisterLeavesNoTraces(t *testing.T) {
 	withScratchEnvKey(t)
 	profile := withScratchProfiles(t, "Microsoft.PowerShell_profile.ps1")[0]
-	t.Setenv("LOCALAPPDATA", t.TempDir()) // installDir() = %LOCALAPPDATA%\claude-acc
+	t.Setenv("LOCALAPPDATA", t.TempDir()) // installDir() = %LOCALAPPDATA%\acc-claude
 
 	// Seed pre-existing content on both sides to prove it survives unregister.
 	const existingPath = `C:\Windows\System32`

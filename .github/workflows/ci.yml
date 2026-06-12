@@ -47,12 +47,12 @@ jobs:
           CGO_ENABLED: 0
         run: |
           for t in windows/amd64 windows/arm64 darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
-            GOOS="${t%/*}" GOARCH="${t#*/}" go build -o /dev/null ./cmd/claude-acc
+            GOOS="${t%/*}" GOARCH="${t#*/}" go build -o /dev/null ./cmd/acc-claude
           done
 
   # Rolling pre-release built from main on every push, gated on `test`. It is
   # intentionally a *prerelease*: GitHub's releases/latest (used by
-  # `claude-acc update` and both installers) skips prereleases, so nightly never
+  # `acc-claude update` and both installers) skips prereleases, so nightly never
   # reaches stable users. A single rolling "nightly" tag is reused (deleted and
   # recreated) rather than one tag per commit, so the releases page stays clean
   # and we don't flood AV reputation systems with many distinct unsigned binaries.
@@ -94,4 +94,4 @@ jobs:
             --title "Nightly ($VERSION)" \
             --notes "Automated build of \`$GITHUB_SHA\` ($VERSION).
 
-          This is a **pre-release**. The installers and \`claude-acc update\` track stable releases only, so they will not pick this up. Download an asset below to try the latest main."
+          This is a **pre-release**. The installers and \`acc-claude update\` track stable releases only, so they will not pick this up. Download an asset below to try the latest main."

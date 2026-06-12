@@ -11,14 +11,14 @@
     "StringFileInfo": {
         "Comments": "Switch between Anthropic (Claude Code) accounts. https://github.com/Samseys/anthropic-account-switcher",
         "CompanyName": "Samseys",
-        "FileDescription": "claude-acc - switch between Anthropic (Claude Code) accounts",
+        "FileDescription": "acc-claude - switch between Anthropic (Claude Code) accounts",
         "FileVersion": "",
-        "InternalName": "claude-acc",
+        "InternalName": "acc-claude",
         "LegalCopyright": "Copyright (c) Samseys. MIT License.",
         "LegalTrademarks": "",
-        "OriginalFilename": "claude-acc.exe",
+        "OriginalFilename": "acc-claude.exe",
         "PrivateBuild": "",
-        "ProductName": "claude-acc",
+        "ProductName": "acc-claude",
         "ProductVersion": "",
         "SpecialBuild": ""
     },

@@ -1,11 +1,11 @@
-// Package install makes claude-acc reachable from any shell and manages the
+// Package install makes acc-claude reachable from any shell and manages the
 // on-disk binary: it copies the running binary into a canonical per-user bin
 // directory, puts that directory on the user's PATH, and reverses both on
 // unregister. It also owns replacing the running binary in place (used by the
 // updater) and the Windows self-delete dance.
 //
-//	Windows : %LOCALAPPDATA%\claude-acc\claude-acc.exe + user PATH (HKCU\Environment)
-//	Unix    : ~/.local/bin/claude-acc                  + PATH export in shell rc
+//	Windows : %LOCALAPPDATA%\acc-claude\acc-claude.exe + user PATH (HKCU\Environment)
+//	Unix    : ~/.local/bin/acc-claude                  + PATH export in shell rc
 package install
 
 import (
@@ -136,7 +136,7 @@ func Unregister(purge bool) error {
 }
 
 // removeInstallDir deletes the install folder, but only the dedicated per-tool
-// directory we create on Windows (%LOCALAPPDATA%\claude-acc). On Unix the
+// directory we create on Windows (%LOCALAPPDATA%\acc-claude). On Unix the
 // install dir is a shared location (~/.local/bin) that must never be removed.
 // os.Remove only deletes an empty directory, so a folder that still holds other
 // files is left intact.

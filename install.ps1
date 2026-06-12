@@ -1,12 +1,12 @@
-# One-line installer for claude-acc on Windows.
+# One-line installer for acc-claude on Windows.
 #   irm https://raw.githubusercontent.com/Samseys/anthropic-account-switcher/main/install.ps1 | iex
 #
 # To install the rolling nightly pre-release instead of the latest stable
 # release, set the env var first (works through the piped one-liner):
-#   $env:CLAUDE_ACC_NIGHTLY = '1'; irm https://.../install.ps1 | iex
+#   $env:ACC_CLAUDE_NIGHTLY = '1'; irm https://.../install.ps1 | iex
 #
 # Downloads the selected release binary for this machine's architecture, verifies
-# it against the published SHA256SUMS, installs it into %LOCALAPPDATA%\claude-acc,
+# it against the published SHA256SUMS, installs it into %LOCALAPPDATA%\acc-claude,
 # then runs `register` to put that directory on PATH. The installer owns file
 # placement: the binary never copies or rewrites itself.
 param([switch]$Nightly)
@@ -15,10 +15,10 @@ $ErrorActionPreference = 'Stop'
 $repo = 'Samseys/anthropic-account-switcher'
 
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
-$asset = "claude-acc_windows_$arch.exe"
+$asset = "acc-claude_windows_$arch.exe"
 
 # Nightly is an opt-in rolling pre-release; everyone else tracks latest stable.
-if ($Nightly -or $env:CLAUDE_ACC_NIGHTLY -eq '1') {
+if ($Nightly -or $env:ACC_CLAUDE_NIGHTLY -eq '1') {
   $channel = 'nightly'
   $base = "https://github.com/$repo/releases/download/nightly"
 } else {
@@ -26,7 +26,7 @@ if ($Nightly -or $env:CLAUDE_ACC_NIGHTLY -eq '1') {
   $base = "https://github.com/$repo/releases/latest/download"
 }
 
-$tmp = Join-Path ([System.IO.Path]::GetTempPath()) "claude-acc-install"
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) "acc-claude-install"
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue -LiteralPath $tmp
 New-Item -ItemType Directory -Path $tmp | Out-Null
 $binPath  = Join-Path $tmp $asset
@@ -44,9 +44,9 @@ if (-not $want) { throw "no checksum for $asset in SHA256SUMS" }
 if ($got -ne $want) { throw "checksum mismatch for ${asset}: expected $want, got $got" }
 Write-Host "Checksum verified."
 
-# Install location must match the Go installDir(): %LOCALAPPDATA%\claude-acc.
-$dir  = Join-Path $env:LOCALAPPDATA 'claude-acc'
-$dest = Join-Path $dir 'claude-acc.exe'
+# Install location must match the Go installDir(): %LOCALAPPDATA%\acc-claude.
+$dir  = Join-Path $env:LOCALAPPDATA 'acc-claude'
+$dest = Join-Path $dir 'acc-claude.exe'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 Copy-Item -LiteralPath $binPath -Destination $dest -Force
 Write-Host "Installed to $dest"

@@ -1,4 +1,4 @@
-# Cross-platform build tooling for claude-acc. Needs only `make` and the Go
+# Cross-platform build tooling for acc-claude. Needs only `make` and the Go
 # toolchain: every recipe is a single command that runs the same under cmd.exe
 # and a POSIX shell. All platform-specific work lives in ./scripts/build.
 

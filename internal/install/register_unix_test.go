@@ -64,10 +64,10 @@ func TestRegisterUnregisterLeavesNoTraces(t *testing.T) {
 	}
 
 	final, _ := paths.ReadFileOpt(rc)
-	// No marker of ours remains (the PATH marker "# claude-acc" is a prefix of
+	// No marker of ours remains (the PATH marker "# acc-claude" is a prefix of
 	// the completion marker, so this single check covers both blocks).
 	if strings.Contains(final, "# "+paths.Bin) {
-		t.Errorf("TRACE LEFT: a claude-acc block remains in %s:\n%s", rc, final)
+		t.Errorf("TRACE LEFT: an acc-claude block remains in %s:\n%s", rc, final)
 	}
 	// The user's own content survived, including their own PATH export.
 	if !strings.Contains(final, "alias ll='ls -l'") || !strings.Contains(final, userExport) {

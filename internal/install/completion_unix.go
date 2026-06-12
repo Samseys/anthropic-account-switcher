@@ -4,7 +4,7 @@ package install
 
 // Unix tab-completion install across every relevant shell:
 //   - bash and zsh load it from a marked block in their rc file (sourced after
-//     the PATH block, so `claude-acc` is already reachable);
+//     the PATH block, so `acc-claude` is already reachable);
 //   - fish gets a dedicated file in its completions directory, which it autoloads.
 //
 // install configures the current shell plus any other shell whose config already

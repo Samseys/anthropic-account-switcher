@@ -110,7 +110,7 @@ func (c *Command) invocation() string {
 
 // App is a registered set of commands plus the metadata help needs.
 type App struct {
-	Name    string   // binary name, e.g. "claude-acc"
+	Name    string   // binary name, e.g. "acc-claude"
 	Version string   // shown by the built-in `version` command and in help
 	Tagline string   // one-line description in the help header
 	Notes   []string // trailing "Notes:" bullets in help

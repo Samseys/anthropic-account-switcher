@@ -10,13 +10,13 @@ import (
 
 // Tab-completion install/uninstall, wired into register/unregister. On Unix the
 // installed line sources the running binary's output at shell startup (`source
-// <(claude-acc completion <shell>)`); on Windows a static script file is written
+// <(acc-claude completion <shell>)`); on Windows a static script file is written
 // and dot-sourced instead (see completion_windows.go). Either way the script
 // defers to the binary at completion time, so it never goes stale on update.
 //
 // The shell-specific work lives in completion_unix.go and completion_windows.go;
 // the marker-block file editing shared by both lives here. completionMarker is a
-// distinct comment from the PATH block's "# claude-acc" marker, so the two never
+// distinct comment from the PATH block's "# acc-claude" marker, so the two never
 // interfere on shells where both land in the same startup file.
 const completionMarker = "# " + paths.Bin + " completion"
 

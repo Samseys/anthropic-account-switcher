@@ -18,7 +18,7 @@ import (
 )
 
 // Bin is the tool's binary/command name.
-const Bin = "claude-acc"
+const Bin = "acc-claude"
 
 // Version is overridden at build time via
 // -ldflags "-X .../internal/paths.Version=...".
@@ -107,7 +107,7 @@ func ReadTrim(path string) string {
 // it into place. Go writes no BOM, which Claude Code's JSON parser requires.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".claude-acc-*.tmp")
+	tmp, err := os.CreateTemp(dir, ".acc-claude-*.tmp")
 	if err != nil {
 		return err
 	}

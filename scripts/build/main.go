@@ -1,4 +1,4 @@
-// Command build is the cross-platform build tool for claude-acc. Everything the
+// Command build is the cross-platform build tool for acc-claude. Everything the
 // Makefile needs that would otherwise differ between cmd.exe and a POSIX shell
 // (cross-compiling, hashing, mkdir/rm) lives here so the Makefile stays trivial.
 //
@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	binary  = "claude-acc"
-	pkg     = "./cmd/claude-acc"
+	binary  = "acc-claude"
+	pkg     = "./cmd/acc-claude"
 	distDir = "dist"
 	binDir  = "bin"
 )
@@ -117,20 +117,20 @@ func buildTarget(goos, goarch, out string) error {
 	return goBuild(goos, goarch, out)
 }
 
-// genWindowsResource writes cmd/claude-acc/resource_windows_<arch>.syso, which Go
+// genWindowsResource writes cmd/acc-claude/resource_windows_<arch>.syso, which Go
 // links automatically when building that GOARCH (the _windows_<arch> suffix acts
 // as a build constraint). It stamps the build version and reads static metadata
 // from versioninfo.json plus the app manifest. The first call fetches the pinned
 // goversioninfo (needs network, as the release CI has).
 func genWindowsResource(arch string) (string, error) {
 	maj, min, patch := semverParts(version())
-	dir := filepath.Join("cmd", "claude-acc")
+	dir := filepath.Join("cmd", "acc-claude")
 	out := filepath.Join(dir, "resource_windows_"+arch+".syso")
 	args := []string{
 		"run", goversioninfoPkg,
 		"-64", // 64-bit resource; combined with -arm below this selects ARM64
 		"-o", out,
-		"-manifest", filepath.Join(dir, "claude-acc.manifest"),
+		"-manifest", filepath.Join(dir, "acc-claude.manifest"),
 		"-ver-major", strconv.Itoa(maj),
 		"-ver-minor", strconv.Itoa(min),
 		"-ver-patch", strconv.Itoa(patch),

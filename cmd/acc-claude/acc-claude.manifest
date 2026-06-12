@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<!-- Embedded into claude-acc.exe as its application manifest. Declaring
+<!-- Embedded into acc-claude.exe as its application manifest. Declaring
      asInvoker keeps Windows from heuristically treating the binary as an
      installer that needs elevation - one less thing for endpoint security to
      misread - and the rest is standard modern-Windows hygiene. -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="Samseys.claude-acc" version="1.0.0.0" processorArchitecture="*"/>
+  <assemblyIdentity type="win32" name="Samseys.acc-claude" version="1.0.0.0" processorArchitecture="*"/>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>
