@@ -8,11 +8,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// running enumerates the process table natively (no subprocess, no CLR) and
-// looks for a Claude Code process by image name. Modern Claude Code ships as a
-// native claude.exe, so the image name is enough; a legacy node-hosted session
-// (visible only in the command line) is missed, which is acceptable for a
-// best-effort, warn-only check.
+// running enumerates the process table via Toolhelp32 and checks image names.
+// A legacy node-hosted session is missed (no command-line access here), which
+// is acceptable for a best-effort warn-only check.
 func running() bool {
 	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {

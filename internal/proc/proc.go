@@ -1,24 +1,18 @@
-// Package proc provides best-effort detection of a running Claude Code process.
-// It is used to warn (never to block) before a switch: a live Claude Code
-// session can rewrite .credentials.json on a token refresh and clobber the
-// swap. Detection is heuristic, so a false positive must never stop the user —
-// callers only print a warning.
-//
-// Consistent with the rest of the tool, it shells out to the OS process tools
-// rather than linking platform APIs. The platform-specific scan lives in
-// proc_windows.go / proc_unix.go.
+// Package proc provides best-effort detection of a running Claude Code process,
+// used only to warn before a switch (never to block). A live session can
+// rewrite .credentials.json on token refresh and clobber the swap; callers
+// only print a warning because detection is heuristic. Shells out to OS tools
+// rather than linking platform APIs; platform code is in proc_{unix,windows}.go.
 package proc
 
 import "strings"
 
-// ClaudeRunning reports, best-effort, whether a Claude Code process appears to
-// be running. Any error (tool missing, nothing matched) yields false.
+// ClaudeRunning reports whether a Claude Code process appears to be running.
 func ClaudeRunning() bool {
 	return running()
 }
 
-// mentionsClaude reports whether s names Claude Code while excluding this tool
-// itself (acc-claude), whose own name would otherwise always match.
+// mentionsClaude reports whether s names Claude Code but not this tool itself.
 func mentionsClaude(s string) bool {
 	s = strings.ToLower(s)
 	return strings.Contains(s, "claude") && !strings.Contains(s, "acc-claude")

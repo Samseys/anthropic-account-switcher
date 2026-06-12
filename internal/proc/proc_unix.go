@@ -9,11 +9,8 @@ import (
 	"strings"
 )
 
-// running lists every process with its full command line and looks for one
-// mentioning "claude" that isn't this tool. ps (not pgrep) is used because its
-// output reliably carries the full argv on both Linux and macOS, so a
-// node-hosted .../claude-code/cli.js is matched, not just a native claude
-// binary.
+// running scans processes for one mentioning "claude". Uses ps (not pgrep) for
+// full argv, so a node-hosted claude-code/cli.js is also matched.
 func running() bool {
 	out, err := exec.Command("ps", "-A", "-ww", "-o", "pid=,args=").Output()
 	if err != nil {
