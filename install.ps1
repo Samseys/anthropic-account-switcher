@@ -25,7 +25,7 @@ if ($Nightly -or $env:ACC_CLAUDE_NIGHTLY -eq '1') {
   # the most recent pre-release.
   $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Headers @{ 'User-Agent' = 'acc-claude-installer' } |
     Where-Object { $_.prerelease } |
-    Sort-Object { [datetime]$_.published_at } -Descending |
+    Sort-Object published_at -Descending |
     Select-Object -First 1
   if (-not $rel) { throw "no nightly pre-release found" }
   $assetUrl = ($rel.assets | Where-Object { $_.name -eq $asset }      | Select-Object -First 1).browser_download_url
