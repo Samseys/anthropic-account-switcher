@@ -25,9 +25,10 @@ Open a new terminal afterwards so the `PATH` change applies.
 
 ### Nightly builds
 
-Every push to `main` publishes a rolling [`nightly`](https://github.com/Samseys/anthropic-account-switcher/releases/tag/nightly)
-pre-release. It is opt-in: `acc-claude update` and the default installer always
-track stable releases, so you never get nightly by accident. To install it:
+Every push to `main` publishes a [nightly pre-release](https://github.com/Samseys/anthropic-account-switcher/releases)
+(one per build, newest on top; only the latest is kept). It is opt-in:
+`acc-claude update` and the default installer always track stable releases, so
+you never get nightly by accident. To install it:
 
 ```powershell
 # Windows (PowerShell)

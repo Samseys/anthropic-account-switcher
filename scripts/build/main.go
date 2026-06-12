@@ -58,13 +58,14 @@ func main() {
 }
 
 // version derives a version from git describe, or "dev" outside a checkout.
-// $VERSION overrides. --match prevents non-release tags (e.g. "nightly") from
-// being used as the base.
+// $VERSION overrides. --match/--exclude restrict the base to stable release
+// tags: nightly tags are version-prefixed (vX.Y.Z-nightly.*) and would
+// otherwise be picked up as the base.
 func version() string {
 	if v := strings.TrimSpace(os.Getenv("VERSION")); v != "" {
 		return strings.TrimPrefix(v, "v")
 	}
-	out, err := exec.Command("git", "describe", "--tags", "--always", "--dirty", "--match", "v[0-9]*").Output()
+	out, err := exec.Command("git", "describe", "--tags", "--always", "--dirty", "--match", "v[0-9]*", "--exclude", "*-nightly.*").Output()
 	v := strings.TrimSpace(string(out))
 	if err != nil || v == "" {
 		return "dev"

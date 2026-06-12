@@ -2,8 +2,8 @@
 # One-line installer for acc-claude on macOS and Linux.
 #   curl -fsSL https://raw.githubusercontent.com/Samseys/anthropic-account-switcher/main/install.sh | sh
 #
-# To install the rolling nightly pre-release instead of the latest stable
-# release, set the env var or pass --nightly:
+# To install the nightly pre-release instead of the latest stable release, set
+# the env var or pass --nightly:
 #   curl -fsSL https://.../install.sh | ACC_CLAUDE_NIGHTLY=1 sh
 #   curl -fsSL https://.../install.sh | sh -s -- --nightly
 #
@@ -31,21 +31,36 @@ esac
 
 asset="acc-claude_${os}_${arch}"
 
-# Nightly is an opt-in rolling pre-release; everyone else tracks latest stable.
+# Nightly is an opt-in pre-release; everyone else tracks latest stable.
 channel="latest"
 if [ "${ACC_CLAUDE_NIGHTLY:-}" = "1" ] || [ "${1:-}" = "--nightly" ] || [ "${1:-}" = "-n" ]; then
   channel="nightly"
-  base="https://github.com/${repo}/releases/download/nightly"
+fi
+
+if [ "$channel" = "nightly" ]; then
+  # Each nightly has a unique tag (so GitHub lists the newest on top), hence no
+  # fixed download URL. Resolve the live nightly's asset URLs from the Releases
+  # API: its tag is the only one carrying a "-nightly." infix, and the prune in
+  # ci.yml keeps just one alive.
+  releases="$(curl -fsSL "https://api.github.com/repos/${repo}/releases")"
+  asset_url="$(printf '%s\n' "$releases" | grep -oE "https://github.com/${repo}/releases/download/[^\"]+-nightly\.[^\"/]+/${asset}" | head -n1)"
+  sums_url="$(printf '%s\n' "$releases" | grep -oE "https://github.com/${repo}/releases/download/[^\"]+-nightly\.[^\"/]+/SHA256SUMS" | head -n1)"
+  if [ -z "$asset_url" ] || [ -z "$sums_url" ]; then
+    echo "no nightly pre-release asset found for ${asset}" >&2
+    exit 1
+  fi
 else
   base="https://github.com/${repo}/releases/latest/download"
+  asset_url="${base}/${asset}"
+  sums_url="${base}/SHA256SUMS"
 fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 echo "Downloading ${asset} (${channel}) ..."
-curl -fsSL "${base}/${asset}"     -o "${tmp}/${asset}"
-curl -fsSL "${base}/SHA256SUMS"   -o "${tmp}/SHA256SUMS"
+curl -fsSL "$asset_url" -o "${tmp}/${asset}"
+curl -fsSL "$sums_url"  -o "${tmp}/SHA256SUMS"
 
 want="$(awk -v f="$asset" '{ n=$2; sub(/^\*/,"",n); if (n==f) print $1 }' "${tmp}/SHA256SUMS")"
 if [ -z "$want" ]; then
