@@ -37,41 +37,29 @@ func installedBinaryPath() string {
 	return filepath.Join(installDir(), name)
 }
 
-// Register copies the running binary into the per-user bin directory and adds
-// that directory to the user's PATH.
+// Register puts the per-user bin directory on the user's PATH and installs shell
+// tab-completion. It does not copy, move, or rewrite any executable: the binary
+// is placed at installedBinaryPath() by the installer script (install.ps1 /
+// install.sh) and runs from there, so register only wires up the surrounding
+// environment for the binary that already exists.
 func Register() error {
-	self, err := paths.SelfPath()
-	if err != nil {
-		return err
-	}
-
 	dir := installDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+
 	dst := installedBinaryPath()
-	if !paths.PathEqual(self, dst) {
-		data, err := os.ReadFile(self)
-		if err != nil {
-			return fmt.Errorf("reading binary %s: %w", self, err)
-		}
-		// A plain atomic replace fails when the destination is a locked image:
-		// a previously installed claude-acc that is currently running, or one
-		// Windows Defender has open to scan. Windows refuses to overwrite such a
-		// file (ERROR_ACCESS_DENIED) but does allow renaming it aside, so for an
-		// existing destination we reuse the updater's move-aside dance; only a
-		// fresh install writes straight to the target.
-		if paths.FileExists(dst) {
-			err = ReplaceRunningBinary(dst, data, 0o755)
-		} else {
-			err = paths.WriteFileAtomic(dst, data, 0o755)
-		}
-		if err != nil {
-			return fmt.Errorf("copying binary to %s: %w", dst, err)
-		}
+	if self, err := paths.SelfPath(); err == nil && !paths.PathEqual(self, dst) {
+		// We are not the installed copy (e.g. a local build, or the binary was
+		// run straight from Downloads). We deliberately do not copy ourselves
+		// into place - that is the installer's job, and a binary that writes
+		// executables into a user dir is exactly what endpoint security flags -
+		// so just tell the user where a managed install would live.
+		fmt.Printf("Note: running from %s (not the install location %s).\n", self, dst)
+		fmt.Printf("Re-run the installer for a managed install; PATH is still being set for %s.\n", dir)
 	}
 
-	fmt.Printf("Registered '%s' -> %s\n", paths.Bin, dst)
+	fmt.Printf("Registered '%s' on PATH (%s)\n", paths.Bin, dir)
 
 	msg, err := addUserPath(dir)
 	if err != nil {
@@ -145,16 +133,6 @@ func Unregister(purge bool) error {
 		fmt.Printf("Saved profiles kept at %s (run '%s unregister --purge' to delete them too).\n", paths.ProfileDir, paths.Bin)
 	}
 	return nil
-}
-
-// SweepUpdateLeftovers removes the "<binary>.old" file that ReplaceRunningBinary
-// leaves when it replaces the tool's own running image. Windows locks a running
-// .exe until the process holding it exits, so the stale copy cannot be deleted
-// in place; rather than spawn a background deleter (which reads as malware), we
-// reap it here on the next run. Best-effort and silent; a no-op on Unix, where
-// the file is never created.
-func SweepUpdateLeftovers() {
-	_ = os.Remove(installedBinaryPath() + ".old")
 }
 
 // removeInstallDir deletes the install folder, but only the dedicated per-tool

@@ -2,8 +2,10 @@
 # One-line installer for claude-acc on macOS and Linux.
 #   curl -fsSL https://raw.githubusercontent.com/Samseys/anthropic-account-switcher/main/install.sh | sh
 #
-# Downloads the latest release binary for this machine, verifies it against the
-# published SHA256SUMS, then runs `register` to place it on PATH.
+# Downloads the latest release binary, verifies it against the published
+# SHA256SUMS, installs it into ~/.local/bin, then runs `register` to put that
+# directory on PATH. The installer owns file placement: the binary never copies
+# or rewrites itself.
 set -eu
 
 repo="Samseys/anthropic-account-switcher"
@@ -48,5 +50,12 @@ if [ "$got" != "$want" ]; then
 fi
 echo "Checksum verified."
 
-chmod +x "${tmp}/${asset}"
-"${tmp}/${asset}" register
+# Install location must match the Go installDir(): ~/.local/bin/claude-acc.
+dir="${HOME}/.local/bin"
+dest="${dir}/claude-acc"
+mkdir -p "$dir"
+cp "${tmp}/${asset}" "$dest"
+chmod 0755 "$dest"
+echo "Installed to ${dest}"
+
+"$dest" register

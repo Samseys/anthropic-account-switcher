@@ -78,7 +78,7 @@ claude-acc remove <name>       # delete a saved profile
 claude-acc rename <old> <new>  # rename a saved profile
 claude-acc register            # install onto your PATH
 claude-acc unregister          # remove it (--purge also deletes saved profiles)
-claude-acc update [--check]    # update to the latest release (--check only reports)
+claude-acc update [--check]    # check for a newer release and show how to install it
 claude-acc help
 ```
 

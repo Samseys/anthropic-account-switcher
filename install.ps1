@@ -2,7 +2,9 @@
 #   irm https://raw.githubusercontent.com/Samseys/anthropic-account-switcher/main/install.ps1 | iex
 #
 # Downloads the latest release binary for this machine's architecture, verifies
-# it against the published SHA256SUMS, then runs `register` to place it on PATH.
+# it against the published SHA256SUMS, installs it into %LOCALAPPDATA%\claude-acc,
+# then runs `register` to put that directory on PATH. The installer owns file
+# placement: the binary never copies or rewrites itself.
 
 $ErrorActionPreference = 'Stop'
 $repo = 'Samseys/anthropic-account-switcher'
@@ -29,14 +31,13 @@ if (-not $want) { throw "no checksum for $asset in SHA256SUMS" }
 if ($got -ne $want) { throw "checksum mismatch for ${asset}: expected $want, got $got" }
 Write-Host "Checksum verified."
 
-& $binPath register
+# Install location must match the Go installDir(): %LOCALAPPDATA%\claude-acc.
+$dir  = Join-Path $env:LOCALAPPDATA 'claude-acc'
+$dest = Join-Path $dir 'claude-acc.exe'
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+Copy-Item -LiteralPath $binPath -Destination $dest -Force
+Write-Host "Installed to $dest"
 
-# Best-effort cleanup: Defender often still has the just-executed download open
-# to scan it, which makes an immediate delete fail with "in use by another
-# process". register has already succeeded by here, so a leftover temp file is
-# harmless - retry briefly, then leave it for the OS to reap rather than ending
-# on a scary error.
-for ($i = 0; $i -lt 10; $i++) {
-  try { Remove-Item -Recurse -Force $tmp -ErrorAction Stop; break }
-  catch { Start-Sleep -Milliseconds 300 }
-}
+& $dest register
+
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue -LiteralPath $tmp

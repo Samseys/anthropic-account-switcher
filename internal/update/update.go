@@ -1,14 +1,13 @@
-// Package update implements self-update over the GitHub Releases API. The
-// release pipeline publishes one static binary per OS/arch plus a SHA256SUMS
-// manifest; Update discovers the latest release, downloads the asset for this
-// platform, verifies it against SHA256SUMS, and (via internal/install) atomically
-// replaces the running binary in place. MaybeNotify is the passive "a new
-// version is available" nudge.
+// Package update checks the GitHub Releases API for a newer version and, when
+// one exists, tells the user how to install it by re-running the installer. It
+// deliberately does NOT download or overwrite the running binary itself: a
+// program that fetches an executable from the internet and rewrites its own
+// image on disk is the textbook dropper shape that endpoint security flags, so
+// file placement is left entirely to the installer scripts. MaybeNotify is the
+// passive "a new version is available" nudge.
 package update
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,29 +19,24 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Samseys/anthropic-account-switcher/internal/install"
 	"github.com/Samseys/anthropic-account-switcher/internal/paths"
 )
 
 const repo = "Samseys/anthropic-account-switcher"
 
-// assetName is the release asset for the platform we are running on. It must
-// match the names produced by the release workflow (claude-acc_<os>_<arch>).
-func assetName() string {
-	name := fmt.Sprintf("%s_%s_%s", paths.Bin, runtime.GOOS, runtime.GOARCH)
+// installCommand returns the one-line installer invocation for the current OS,
+// shown by Update so the user can upgrade by re-running it.
+func installCommand() string {
+	const base = "https://raw.githubusercontent.com/" + repo + "/main"
 	if runtime.GOOS == "windows" {
-		name += ".exe"
+		return "irm " + base + "/install.ps1 | iex"
 	}
-	return name
+	return "curl -fsSL " + base + "/install.sh | sh"
 }
 
 type ghRelease struct {
 	TagName string `json:"tag_name"`
 	HTMLURL string `json:"html_url"`
-	Assets  []struct {
-		Name string `json:"name"`
-		URL  string `json:"browser_download_url"`
-	} `json:"assets"`
 }
 
 func httpGet(url string, timeout time.Duration) ([]byte, error) {
@@ -133,8 +127,12 @@ func parseSemver(s string) ([3]int, bool) {
 	return out, true
 }
 
-// Update updates to the latest release (or, with checkOnly, only reports
-// whether one is available).
+// Update checks for a newer release and, if one exists, prints the one-line
+// installer command to run. It never downloads or replaces the running binary
+// itself; upgrading re-runs the installer, which places the new binary the same
+// way the first install did. checkOnly and force are accepted for CLI
+// compatibility: there is no longer a self-installing path for checkOnly to
+// suppress, and force only bypasses the "already up to date" short-circuit.
 func Update(checkOnly, force bool) error {
 	current := paths.VersionString()
 	fmt.Printf("Current version: %s\n", current)
@@ -148,80 +146,16 @@ func Update(checkOnly, force bool) error {
 	fmt.Printf("Latest version:  %s\n", latest)
 
 	if !force && current != "dev" && compareVersions(current, latest) >= 0 {
-		fmt.Printf("Already up to date.\n")
-		return nil
-	}
-	if checkOnly {
-		fmt.Printf("A newer version is available: %s\nRun '%s update' to install it.\n", latest, paths.Bin)
+		fmt.Println("Already up to date.")
 		return nil
 	}
 
-	want := assetName()
-	var assetURL, sumsURL string
-	for _, a := range rel.Assets {
-		switch a.Name {
-		case want:
-			assetURL = a.URL
-		case "SHA256SUMS":
-			sumsURL = a.URL
-		}
+	fmt.Printf("\nA newer version is available: %s\n", latest)
+	if rel.HTMLURL != "" {
+		fmt.Printf("Release notes: %s\n", rel.HTMLURL)
 	}
-	if assetURL == "" {
-		return fmt.Errorf("release %s has no asset %q for your platform (%s/%s)",
-			rel.TagName, want, runtime.GOOS, runtime.GOARCH)
-	}
-
-	fmt.Printf("Downloading %s...\n", want)
-	data, err := httpGet(assetURL, 5*time.Minute)
-	if err != nil {
-		return fmt.Errorf("downloading %s: %w", want, err)
-	}
-
-	if sumsURL != "" {
-		sums, err := httpGet(sumsURL, 30*time.Second)
-		if err != nil {
-			return fmt.Errorf("downloading SHA256SUMS: %w", err)
-		}
-		if err := verifyChecksum(data, want, sums); err != nil {
-			return err
-		}
-		fmt.Println("Checksum verified.")
-	} else {
-		fmt.Println("WARNING: release has no SHA256SUMS; skipping checksum verification.")
-	}
-
-	self, err := paths.SelfPath()
-	if err != nil {
-		return err
-	}
-	if err := install.ReplaceRunningBinary(self, data, 0o755); err != nil {
-		return fmt.Errorf("replacing %s: %w", self, err)
-	}
-
-	fmt.Printf("Updated '%s' to %s (%s).\n", paths.Bin, latest, self)
+	fmt.Printf("\nTo update, re-run the installer:\n\n    %s\n\n", installCommand())
 	return nil
-}
-
-// verifyChecksum confirms that data hashes to the SHA256SUMS entry for name.
-func verifyChecksum(data []byte, name string, sums []byte) error {
-	sum := sha256.Sum256(data)
-	got := hex.EncodeToString(sum[:])
-	for line := range strings.SplitSeq(string(sums), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) != 2 {
-			continue
-		}
-		// SHA256SUMS lines are "<hex>  <filename>"; the name may carry a
-		// leading "*" for binary mode.
-		if strings.TrimPrefix(fields[1], "*") != name {
-			continue
-		}
-		if !strings.EqualFold(fields[0], got) {
-			return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", name, fields[0], got)
-		}
-		return nil
-	}
-	return fmt.Errorf("no checksum for %s in SHA256SUMS", name)
 }
 
 // ---- passive "update available" nudge ----

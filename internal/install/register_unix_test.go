@@ -32,11 +32,21 @@ func TestRegisterUnregisterLeavesNoTraces(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The installer (install.sh) places the binary; Register only wires up PATH
+	// and completion for it. Stage a stand-in at the install location so the
+	// round trip can later assert unregister removes it.
+	dst := installedBinaryPath()
+	if err := os.MkdirAll(installDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
 	// --- register ---
 	if err := Register(); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	dst := installedBinaryPath()
 	after, _ := paths.ReadFileOpt(rc)
 	if !strings.Contains(after, "# "+paths.Bin+"\nexport PATH=") {
 		t.Fatalf("register did not add the PATH block:\n%s", after)

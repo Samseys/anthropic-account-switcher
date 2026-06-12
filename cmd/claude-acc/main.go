@@ -11,7 +11,7 @@
 // hands them to the internal/cli framework, which drives dispatch, help, and
 // shell completion from that one table. The work lives in the internal/
 // packages: profile (the account commands), store (credential I/O), install
-// (register/PATH), update (self-update), and paths (shared config).
+// (register/PATH), update (release version check), and paths (shared config).
 package main
 
 import (
@@ -25,9 +25,6 @@ import (
 )
 
 func main() {
-	// Reap the stale "<binary>.old" left by a self-update, now that the process
-	// that locked it is gone (see install.SweepUpdateLeftovers).
-	install.SweepUpdateLeftovers()
 	if err := buildApp().Run(os.Args[1:]); err != nil {
 		paths.Die("%s", err)
 	}
@@ -135,7 +132,7 @@ func buildApp() *cli.App {
 		},
 		&cli.Command{
 			Name: "update", Aliases: []string{"upgrade", "self-update"}, Usage: "[--check]", Meta: true,
-			Summary: "Update to the latest release (--check only reports)",
+			Summary: "Check for a newer release and show how to install it",
 			Flags: []cli.Flag{
 				{Name: "--check", Desc: "Only report whether an update is available"},
 				{Name: "--force", Desc: "Reinstall even if already current"},
