@@ -34,10 +34,18 @@ func setupEnv(t *testing.T) {
 	}
 }
 
-// writeAccount simulates being logged in as the given account.
+// machineUserID is the top-level userID Claude Code writes into ~/.claude.json.
+// It is a machine-wide analytics ID: every account on the same install shares
+// it, so it must NOT be used to tell accounts apart. The tests deliberately
+// give every account the same value to guard against that regression.
+const machineUserID = "machine-analytics-id"
+
+// writeAccount simulates being logged in as the given account. id is the
+// per-account accountUuid (distinct per account); the machine-wide userID is
+// the same for all of them, mirroring the real ~/.claude.json.
 func writeAccount(t *testing.T, email, id, token string) {
 	t.Helper()
-	cfg := fmt.Sprintf(`{"oauthAccount": {"emailAddress": %q}, "userID": %q, "other": 1}`, email, id)
+	cfg := fmt.Sprintf(`{"oauthAccount": {"emailAddress": %q, "accountUuid": %q}, "userID": %q, "other": 1}`, email, id, machineUserID)
 	if err := paths.WriteFileAtomic(paths.ConfigFile, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -83,8 +91,11 @@ func TestSaveSwitchRoundTrip(t *testing.T) {
 		t.Fatalf("live credentials not restored: %s", live)
 	}
 	cfg, _ := paths.ReadFileOpt(paths.ConfigFile)
-	if v, _ := claudejson.TopLevelValue(cfg, "userID"); v != `"id-a"` {
+	if v, _ := claudejson.TopLevelValue(cfg, "userID"); v != fmt.Sprintf("%q", machineUserID) {
 		t.Fatalf("spliced userID = %s", v)
+	}
+	if a := claudejson.Field(cfg, "accountUuid"); a != "id-a" {
+		t.Fatalf("spliced accountUuid = %q", a)
 	}
 	if e := claudejson.Field(cfg, "emailAddress"); e != "a@example.com" {
 		t.Fatalf("spliced email = %q", e)
@@ -196,6 +207,40 @@ func TestSaveSameAccountIsIdempotent(t *testing.T) {
 	}
 	if got := profileNames(); len(got) != 1 || got[0] != "work" {
 		t.Fatalf("profiles after rejected save = %v, want [work]", got)
+	}
+}
+
+// TestSaveDistinguishesAccountsSharingMachineID is the regression guard for the
+// bug where every account on a machine collapsed into one profile: the top-level
+// userID is a machine-wide analytics ID, so identity must key on the per-account
+// accountUuid instead.
+func TestSaveDistinguishesAccountsSharingMachineID(t *testing.T) {
+	setupEnv(t)
+
+	// Account A saved under its email.
+	writeAccount(t, "a@example.com", "uuid-a", "tok-a")
+	if _, err := snapshot("", true); err != nil {
+		t.Fatal(err)
+	}
+
+	// Log in as a different account (same machine userID, different accountUuid)
+	// and bare-save. It must create a second profile, not update A's.
+	writeAccount(t, "b@example.com", "uuid-b", "tok-b")
+	if got := activeProfile(); got != "" {
+		t.Fatalf("account B wrongly matched profile %q", got)
+	}
+	name, err := snapshot("", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "b@example.com" {
+		t.Fatalf("bare save name = %q, want b@example.com", name)
+	}
+	if got := profileNames(); len(got) != 2 {
+		t.Fatalf("profiles = %v, want two distinct profiles", got)
+	}
+	if got := activeProfile(); got != "b@example.com" {
+		t.Fatalf("activeProfile = %q, want b@example.com", got)
 	}
 }
 

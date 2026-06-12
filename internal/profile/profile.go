@@ -57,9 +57,18 @@ func resolveProfile(name string) (string, string, error) {
 }
 
 // profileUserID returns the userID recorded in the profile at dir (quotes
-// included, matching liveUserID), or "".
+// included), or "". This is the machine-wide analytics ID; it is restored into
+// ~/.claude.json on switch but is NOT used to identify accounts (see
+// profileAccountID).
 func profileUserID(dir string) string {
 	return paths.ReadTrim(filepath.Join(dir, fileUserID))
+}
+
+// profileAccountID returns the account UUID recorded in the profile at dir
+// (from its saved oauthAccount), or "". This is the per-account identity used
+// to match the live account against saved profiles.
+func profileAccountID(dir string) string {
+	return claudejson.Field(profileOAuth(dir), "accountUuid")
 }
 
 // profileOAuth returns the raw oauthAccount value recorded in the profile at
@@ -204,11 +213,12 @@ func readProfileCreds(dir string) ([]byte, error) {
 
 // liveIdentity is the cached account identity spliced into ~/.claude.json: the
 // raw oauthAccount and userID values (verbatim, quotes/braces included) plus the
-// emailAddress pulled out of oauthAccount for display.
+// emailAddress and accountUUID pulled out of oauthAccount.
 type liveIdentity struct {
-	oauth  string
-	userID string
-	email  string
+	oauth     string
+	userID    string
+	accountID string
+	email     string
 }
 
 // readLiveIdentity extracts the cached identity from ~/.claude.json. A missing
@@ -224,21 +234,25 @@ func readLiveIdentity() liveIdentity {
 	id.oauth = strings.TrimSpace(oauth)
 	id.userID = strings.TrimSpace(userID)
 	id.email = claudejson.Field(id.oauth, "emailAddress")
+	id.accountID = claudejson.Field(id.oauth, "accountUuid")
 	return id
 }
 
-// liveUserID returns the raw userID value cached in ~/.claude.json (quotes
-// included), or "".
-func liveUserID() string {
-	return readLiveIdentity().userID
+// liveAccountID returns the live account's UUID (oauthAccount.accountUuid in
+// ~/.claude.json), or "". Unlike the top-level userID — a machine-wide
+// analytics ID shared by every account on this install — accountUuid is unique
+// per account, so it is what identity matching keys on.
+func liveAccountID() string {
+	return readLiveIdentity().accountID
 }
 
 // activeProfile returns the name of the saved profile matching the live
-// account, or "". Matching uses the stable userID: Claude Code rotates the
-// OAuth token in place, so the credential blob drifts over time. It falls back
-// to a credential compare if no userID is present.
+// account, or "". Matching uses the per-account accountUuid, which is stable
+// across the in-place OAuth token rotation Claude Code performs (so the
+// credential blob drifts over time). It falls back to a credential compare for
+// older profiles that predate the stored accountUuid.
 func activeProfile() string {
-	liveID := liveUserID()
+	liveID := liveAccountID()
 	var liveCred []byte
 	if liveID == "" {
 		liveCred, _ = store.TryReadCreds()
@@ -246,7 +260,7 @@ func activeProfile() string {
 	for _, name := range profileNames() {
 		dir := profilePath(name)
 		if liveID != "" {
-			if pid := profileUserID(dir); pid != "" && pid == liveID {
+			if pid := profileAccountID(dir); pid != "" && pid == liveID {
 				return name
 			}
 		} else if len(liveCred) > 0 {
@@ -269,7 +283,7 @@ func snapshot(name string, quiet bool) (string, error) {
 	oauthText, userIDText, email := id.oauth, id.userID, id.email
 
 	// existing is the profile (if any) already tracking this live account,
-	// matched by the stable userID. It both supplies the default name for a
+	// matched by the stable accountUuid. It both supplies the default name for a
 	// bare save and pins the name a named save may use, so one account never
 	// ends up stored under two profiles.
 	existing := activeProfile()
@@ -485,7 +499,7 @@ func Switch(name string) error {
 		fmt.Printf("Profile %q is already active; refreshed its snapshot.\n", name)
 		return nil
 	}
-	if pid := profileUserID(dir); pid != "" && pid == liveUserID() {
+	if pid := profileAccountID(dir); pid != "" && pid == liveAccountID() {
 		fmt.Printf("Profile %q matches the currently active account; nothing to do.\n", name)
 		return nil
 	}

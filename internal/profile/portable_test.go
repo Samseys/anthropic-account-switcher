@@ -2,6 +2,7 @@ package profile
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,8 +72,11 @@ func TestExportImportPlaintextRoundTrip(t *testing.T) {
 	if e := profileEmail(dir); e != "a@example.com" {
 		t.Fatalf("imported email = %q", e)
 	}
-	if u := profileUserID(dir); u != `"id-a"` {
+	if u := profileUserID(dir); u != fmt.Sprintf("%q", machineUserID) {
 		t.Fatalf("imported userID = %q", u)
+	}
+	if a := profileAccountID(dir); a != "id-a" {
+		t.Fatalf("imported accountUuid = %q", a)
 	}
 }
 
