@@ -53,11 +53,11 @@ func (c Ctx) Has(flag string) bool { return c.flags[strings.ToLower(flag)] }
 // Command is one subcommand. The zero value is not useful; at minimum set Name,
 // Summary, and Run.
 type Command struct {
-	Name    string   // canonical name, e.g. "switch"
-	Aliases []string // alternative spellings, e.g. "use"; never shown in help
-	Usage   string   // the argument spec shown in help after the name, e.g. "[name|-]"
-	Summary string   // help description; may contain '\n' for curated line breaks
-	Flags   []Flag   // accepted flags, offered when the partial word starts with '-'
+	Name    string    // canonical name, e.g. "switch"
+	Aliases []string  // alternative spellings, e.g. "use"; never shown in help
+	Usage   string    // the argument spec shown in help after the name, e.g. "[name|-]"
+	Summary string    // help description; may contain '\n' for curated line breaks
+	Flags   []Flag    // accepted flags, offered when the partial word starts with '-'
 	Args    []ArgKind // positional kinds by index; indices past the end are ArgNone
 
 	// ArgKindOverride, when set, replaces Args for completion: it returns the
