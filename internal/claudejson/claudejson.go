@@ -1,20 +1,13 @@
-// Package claudejson implements a string-aware locator for top-level values in
-// ~/.claude.json. It is deliberately NOT a full JSON parser.
-//
-// ~/.claude.json can contain duplicate object keys (e.g. project paths that
-// differ only in drive-letter case). A normal parse-and-rewrite would either
-// fail or silently drop one of the duplicates. So we splice only the
-// oauthAccount/userID values by byte offset, leaving the rest of the document
-// byte-for-byte intact.
-//
-// This is the single source of truth for the splice algorithm. The previous
-// PowerShell and embedded-Python implementations were line-for-line ports of
-// each other; keeping it in one place removes that drift hazard.
+// Package claudejson is a string-aware, byte-offset splicer for top-level values
+// in ~/.claude.json. It is deliberately NOT a full JSON parser: that file can
+// contain duplicate object keys, so we splice only oauthAccount/userID by byte
+// offset, leaving the rest of the document byte-for-byte intact.
 package claudejson
 
 import (
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // Span is a half-open byte range [Start, End) into a document.
@@ -26,9 +19,8 @@ func isSpace(b byte) bool {
 	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '\v' || b == '\f'
 }
 
-// valueEnd returns the index just past the JSON value that starts at index i.
-// Indices are byte offsets; this is safe for UTF-8 because every byte we test
-// against is ASCII and multi-byte continuation bytes never match a delimiter.
+// valueEnd returns the index just past the JSON value starting at i.
+// Safe for UTF-8 because all tested bytes are ASCII.
 func valueEnd(t string, i int) int {
 	n := len(t)
 	if i >= n {
@@ -86,9 +78,8 @@ func valueEnd(t string, i int) int {
 	return i
 }
 
-// TopLevelSpan locates the value of the property key at object depth 1.
-// It returns the span and true, or false if the key is absent. Duplicate or
-// nested keys at any other depth are ignored.
+// TopLevelSpan locates the value of key at object depth 1.
+// Keys at any other depth are ignored.
 func TopLevelSpan(t, key string) (Span, bool) {
 	i, n, depth := 0, len(t), 0
 	for i < n {
@@ -138,8 +129,7 @@ func TopLevelSpan(t, key string) (Span, bool) {
 	return Span{}, false
 }
 
-// TopLevelValue returns the raw text of the top-level key's value (including
-// surrounding quotes/braces), or "" and false if absent.
+// TopLevelValue returns the raw text of the top-level key's value, or "" and false if absent.
 func TopLevelValue(t, key string) (string, bool) {
 	s, ok := TopLevelSpan(t, key)
 	if !ok {
@@ -148,8 +138,7 @@ func TopLevelValue(t, key string) (string, bool) {
 	return t[s.Start:s.End], true
 }
 
-// SetTopLevelValue replaces the value of the top-level key with newText and
-// returns the new document. If the key is absent the document is unchanged.
+// SetTopLevelValue replaces the top-level key's value; returns t unchanged if key is absent.
 func SetTopLevelValue(t, key, newText string) string {
 	s, ok := TopLevelSpan(t, key)
 	if !ok {
@@ -158,14 +147,19 @@ func SetTopLevelValue(t, key, newText string) string {
 	return t[:s.Start] + newText + t[s.End:]
 }
 
-// Field extracts a string field from an object's raw text (e.g. emailAddress
-// out of the oauthAccount value). Returns "" if not found.
+var fieldRes sync.Map // field name -> *regexp.Regexp; compiled once per static field name
+
+// Field extracts a string field from an object's raw JSON text; returns "" if not found.
 func Field(objText, field string) string {
 	if objText == "" {
 		return ""
 	}
-	re := regexp.MustCompile(`"` + regexp.QuoteMeta(field) + `"\s*:\s*"((?:[^"\\]|\\.)*)"`)
-	if m := re.FindStringSubmatch(objText); m != nil {
+	re, ok := fieldRes.Load(field)
+	if !ok {
+		re, _ = fieldRes.LoadOrStore(field,
+			regexp.MustCompile(`"`+regexp.QuoteMeta(field)+`"\s*:\s*"((?:[^"\\]|\\.)*)"`))
+	}
+	if m := re.(*regexp.Regexp).FindStringSubmatch(objText); m != nil {
 		return m[1]
 	}
 	return ""
