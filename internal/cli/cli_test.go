@@ -13,29 +13,28 @@ func fixture(profiles ...string) *App {
 	a := New("demo")
 	a.Version = "9.9.9"
 	a.Tagline = "demo app"
-	a.SetProfileSource(func() []string { return profiles })
+	profileC := func() ([]string, bool) { return profiles, false }
+	fileC := func() ([]string, bool) { return nil, true }
 	a.Add(
 		&Command{Name: "save", Usage: "[name]", Summary: "Save it", Run: ok},
 		&Command{Name: "switch", Aliases: []string{"use"}, Summary: "Switch",
-			Args: []ArgKind{ArgProfile}, Run: ok},
+			Complete: Args(profileC), Run: ok},
 		&Command{Name: "remove", Aliases: []string{"rm"}, Summary: "Remove",
-			Args: []ArgKind{ArgProfile}, Run: ok},
+			Complete: Args(profileC), Run: ok},
 		&Command{Name: "rename", Summary: "Rename",
-			Args: []ArgKind{ArgProfile, ArgProfile}, Run: ok},
+			Complete: Args(profileC, profileC), Run: ok},
 		&Command{Name: "list", Summary: "List",
 			Flags: []Flag{{Name: "--json", Desc: "json"}}, Run: ok},
 		&Command{Name: "export", Summary: "Export",
 			Flags: []Flag{{Name: "--all", Desc: "all"}, {Name: "--passphrase", Desc: "pw"}},
-			ArgKindOverride: func(pos int, has func(string) bool) ArgKind {
-				if has("--all") {
-					return ArgFile
+			Complete: func(r CompRequest) ([]string, bool) {
+				if r.Has("--all") {
+					return Args(fileC)(r)
 				}
-				if pos == 0 {
-					return ArgProfile
-				}
-				return ArgFile
+				return Args(profileC, fileC)(r)
 			}, Run: ok},
-		&Command{Name: "import", Summary: "Import", Args: []ArgKind{ArgFile}, Run: ok},
+		&Command{Name: "import", Summary: "Import",
+			Complete: Args(fileC), Run: ok},
 	)
 	return a
 }
@@ -108,6 +107,25 @@ func TestCompleteRenameBothArgs(t *testing.T) {
 		if cands, _ := a.complete(args); len(cands) == 0 {
 			t.Errorf("rename %v offered no profiles", args)
 		}
+	}
+}
+
+// TestArgsPerPosition verifies the Args combinator dispatches a different
+// completer to each positional — the case the old per-position-set helper could
+// not express — and completes to nothing past the provided list.
+func TestArgsPerPosition(t *testing.T) {
+	profileC := func() ([]string, bool) { return []string{"work", "home"}, false }
+	fileC := func() ([]string, bool) { return nil, true }
+	fn := Args(profileC, fileC) // arg 0 = profiles, arg 1 = files
+
+	if cands, files := fn(CompRequest{Pos: 0}); files || !slices.Equal(cands, []string{"work", "home"}) {
+		t.Errorf("pos 0 = (%v, files=%v), want profile names", cands, files)
+	}
+	if cands, files := fn(CompRequest{Pos: 1}); !files || cands != nil {
+		t.Errorf("pos 1 = (%v, files=%v), want file fallback", cands, files)
+	}
+	if cands, files := fn(CompRequest{Pos: 2}); files || cands != nil {
+		t.Errorf("pos 2 = (%v, files=%v), want nothing past the list", cands, files)
 	}
 }
 

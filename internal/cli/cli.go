@@ -16,14 +16,44 @@ import (
 	"strings"
 )
 
-// ArgKind says what a positional argument at a given index completes to.
-type ArgKind int
+// CompRequest describes a positional-argument completion query handed to a
+// command's Complete function.
+type CompRequest struct {
+	Pos  int               // index of the positional being completed (flags skipped)
+	Word string            // the partial word currently under the cursor
+	Has  func(string) bool // whether the named flag (e.g. "--all") is already present
+}
 
-const (
-	ArgNone    ArgKind = iota // no completion offered
-	ArgProfile                // a saved profile name (see SetProfileSource)
-	ArgFile                   // defer to the shell's own filename completion
-)
+// CompleteFunc returns a command's completion candidates for the positional in
+// r. The framework prefix-filters the candidates by the partial word, so a
+// command may simply return its full set (e.g. every saved profile name). A true
+// second return tells the shell to fall back to its own filename completion, in
+// which case the candidates are ignored.
+//
+// This is the framework's only completion hook: it carries no domain concepts of
+// its own (no notion of "profile" or "file"), so each command owns — and can
+// compute dynamically — exactly what its arguments complete to.
+type CompleteFunc func(r CompRequest) (candidates []string, files bool)
+
+// ArgCompleter completes a single positional argument: its candidates, plus
+// whether to fall back to filename completion (the same convention as
+// CompleteFunc's second return).
+type ArgCompleter func() (candidates []string, files bool)
+
+// Args builds a CompleteFunc from one ArgCompleter per positional index, so each
+// argument can complete to a different thing — e.g. Args(profiles, files)
+// completes the first argument to profile names and the second to file paths.
+// Positionals beyond the provided list complete to nothing. Commands whose
+// argument meaning depends on a flag (not just its position) should use a
+// CompleteFunc directly instead.
+func Args(perPos ...ArgCompleter) CompleteFunc {
+	return func(r CompRequest) ([]string, bool) {
+		if r.Pos >= 0 && r.Pos < len(perPos) {
+			return perPos[r.Pos]()
+		}
+		return nil, false
+	}
+}
 
 // Flag is a boolean (presence-only) flag a command accepts, e.g. --json. The
 // tool has no value-taking flags, which keeps parsing and completion trivial.
@@ -53,38 +83,21 @@ func (c Ctx) Has(flag string) bool { return c.flags[strings.ToLower(flag)] }
 // Command is one subcommand. The zero value is not useful; at minimum set Name,
 // Summary, and Run.
 type Command struct {
-	Name    string    // canonical name, e.g. "switch"
-	Aliases []string  // alternative spellings, e.g. "use"; never shown in help
-	Usage   string    // the argument spec shown in help after the name, e.g. "[name|-]"
-	Summary string    // help description; may contain '\n' for curated line breaks
-	Flags   []Flag    // accepted flags, offered when the partial word starts with '-'
-	Args    []ArgKind // positional kinds by index; indices past the end are ArgNone
+	Name    string   // canonical name, e.g. "switch"
+	Aliases []string // alternative spellings, e.g. "use"; never shown in help
+	Usage   string   // the argument spec shown in help after the name, e.g. "[name|-]"
+	Summary string   // help description; may contain '\n' for curated line breaks
+	Flags   []Flag   // accepted flags, offered when the partial word starts with '-'
 
-	// ArgKindOverride, when set, replaces Args for completion: it returns the
-	// kind of the positional at index pos given the flags already present. Use
-	// it for commands whose argument meaning depends on a flag (e.g. export,
-	// where --all turns the first positional into the bundle file).
-	ArgKindOverride func(pos int, has func(string) bool) ArgKind
-
-	// ArgValues, when set, lists static completion candidates for the FIRST
-	// positional (used for small enums like the shell name of `completion`).
-	ArgValues []string
+	// Complete, when set, computes this command's positional-argument
+	// completions (see CompleteFunc). Leave nil for commands whose arguments
+	// complete to nothing (e.g. a free-form new name).
+	Complete CompleteFunc
 
 	Hidden bool // omit from help and first-word completion
 	Meta   bool // administrative command; the App.After hook is skipped for it
 
 	Run func(Ctx) error
-}
-
-// argKind resolves the completion kind for the positional at pos.
-func (c *Command) argKind(pos int, has func(string) bool) ArgKind {
-	if c.ArgKindOverride != nil {
-		return c.ArgKindOverride(pos, has)
-	}
-	if pos >= 0 && pos < len(c.Args) {
-		return c.Args[pos]
-	}
-	return ArgNone
 }
 
 // invocation is the "name [args]" form shown in help.
@@ -105,10 +118,9 @@ type App struct {
 	// After runs after a non-Meta command succeeds, e.g. a passive update check.
 	After func(c *Command, ctx Ctx)
 
-	cmds     []*Command // domain commands, in registration order
-	builtin  []*Command // help/version/completion, always rendered last
-	index    map[string]*Command
-	profiles func() []string
+	cmds    []*Command // domain commands, in registration order
+	builtin []*Command // help/version/completion, always rendered last
+	index   map[string]*Command
 }
 
 // all returns the domain commands followed by the built-ins — the order used by
@@ -121,13 +133,18 @@ const completeCmd = "__complete"
 // New returns an App pre-populated with the built-in help, version, completion
 // and (hidden) __complete commands. Set Version/Tagline/Notes and call Add.
 func New(name string) *App {
-	a := &App{Name: name, index: map[string]*Command{}, profiles: func() []string { return nil }}
+	a := &App{Name: name, index: map[string]*Command{}}
 	a.builtin = []*Command{
 		{
 			Name: "completion", Usage: "<shell>", Meta: true,
-			Summary:   "Print a tab-completion script (bash|zsh|fish|powershell)",
-			ArgValues: []string{"bash", "zsh", "fish", "powershell"},
-			Run:       func(c Ctx) error { return a.completionScript(c.Arg(0)) },
+			Summary: "Print a tab-completion script (bash|zsh|fish|powershell)",
+			Complete: func(r CompRequest) ([]string, bool) {
+				if r.Pos == 0 {
+					return []string{"bash", "zsh", "fish", "powershell"}, false
+				}
+				return nil, false
+			},
+			Run: func(c Ctx) error { return a.completionScript(c.Arg(0)) },
 		},
 		{
 			Name: "help", Aliases: []string{"--help", "-h", ""}, Meta: true,
@@ -145,11 +162,6 @@ func New(name string) *App {
 	}
 	return a
 }
-
-// SetProfileSource supplies the function completion uses to list saved profile
-// names for ArgProfile positionals. Kept injectable so the framework needn't
-// import the profile package.
-func (a *App) SetProfileSource(f func() []string) { a.profiles = f }
 
 // Add registers domain commands (and indexes their names and aliases). A later
 // command may intentionally override an earlier registration of the same name.

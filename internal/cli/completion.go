@@ -88,16 +88,18 @@ func (a *App) complete(words []string) ([]string, string) {
 		}
 	}
 
-	switch cmd.argKind(pos, func(f string) bool { return has[strings.ToLower(f)] }) {
-	case ArgProfile:
-		return prefixFilter(a.profiles(), toComplete), dirNoFile
-	case ArgFile:
+	if cmd.Complete == nil {
+		return nil, dirNoFile
+	}
+	candidates, files := cmd.Complete(CompRequest{
+		Pos:  pos,
+		Word: toComplete,
+		Has:  func(f string) bool { return has[strings.ToLower(f)] },
+	})
+	if files {
 		return nil, dirDefault
 	}
-	if pos == 0 && len(cmd.ArgValues) > 0 {
-		return prefixFilter(cmd.ArgValues, toComplete), dirNoFile
-	}
-	return nil, dirNoFile
+	return prefixFilter(candidates, toComplete), dirNoFile
 }
 
 // reply prints the candidates for the shell-supplied words (last = the wrapped

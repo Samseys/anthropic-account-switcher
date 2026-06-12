@@ -40,8 +40,6 @@ func buildApp() *cli.App {
 		"A switch requires a full restart of Claude Code to take effect.",
 		"Switching re-saves the account you are leaving, so its tokens stay fresh.",
 	}
-	app.SetProfileSource(profile.Names)
-
 	// After a normal command succeeds, nudge about a new version at most once a
 	// day. Skipped for Meta commands (update/version/help/completion) by the
 	// framework, and suppressed here when output is machine-readable (--json).
@@ -68,8 +66,8 @@ func buildApp() *cli.App {
 			Name: "switch", Aliases: []string{"use"}, Usage: "[name|-]",
 			Summary: "Switch to a profile ('-' = previous; no name toggles\n" +
 				"between two saved profiles), then restart Claude Code",
-			Args: []cli.ArgKind{cli.ArgProfile},
-			Run:  func(c cli.Ctx) error { return profile.Switch(c.Arg(0)) },
+			Complete: cli.Args(profiles),
+			Run:      func(c cli.Ctx) error { return profile.Switch(c.Arg(0)) },
 		},
 		&cli.Command{
 			Name: "current", Aliases: []string{"whoami"}, Usage: "[--json]",
@@ -79,15 +77,15 @@ func buildApp() *cli.App {
 		},
 		&cli.Command{
 			Name: "remove", Aliases: []string{"rm"}, Usage: "<name>",
-			Summary: "Delete a saved profile",
-			Args:    []cli.ArgKind{cli.ArgProfile},
-			Run:     func(c cli.Ctx) error { return profile.Remove(c.Arg(0)) },
+			Summary:  "Delete a saved profile",
+			Complete: cli.Args(profiles),
+			Run:      func(c cli.Ctx) error { return profile.Remove(c.Arg(0)) },
 		},
 		&cli.Command{
 			Name: "rename", Aliases: []string{"mv"}, Usage: "<old> <new>",
-			Summary: "Rename a saved profile",
-			Args:    []cli.ArgKind{cli.ArgProfile, cli.ArgProfile},
-			Run:     func(c cli.Ctx) error { return profile.Rename(c.Arg(0), c.Arg(1)) },
+			Summary:  "Rename a saved profile",
+			Complete: cli.Args(profiles, profiles),
+			Run:      func(c cli.Ctx) error { return profile.Rename(c.Arg(0), c.Arg(1)) },
 		},
 		&cli.Command{
 			Name: "export", Usage: "<name|--all> [file] [--passphrase]",
@@ -97,16 +95,14 @@ func buildApp() *cli.App {
 				{Name: "--all", Desc: "Export every saved profile"},
 				{Name: "--passphrase", Desc: "Encrypt the bundle"},
 			},
-			// With --all the lone positional is the file; otherwise the first
-			// positional is a profile name and the file follows.
-			ArgKindOverride: func(pos int, has func(string) bool) cli.ArgKind {
-				if has("--all") {
-					return cli.ArgFile
+			// The flag changes what the positionals mean, so this is a CompleteFunc
+			// rather than a fixed Args list: with --all the lone positional is the
+			// bundle file; otherwise it is <profile> then the file.
+			Complete: func(r cli.CompRequest) ([]string, bool) {
+				if r.Has("--all") {
+					return cli.Args(files)(r)
 				}
-				if pos == 0 {
-					return cli.ArgProfile
-				}
-				return cli.ArgFile
+				return cli.Args(profiles, files)(r)
 			},
 			Run: func(c cli.Ctx) error {
 				if c.Has("--all") {
@@ -119,9 +115,9 @@ func buildApp() *cli.App {
 			Name: "import", Usage: "<file> [--overwrite]",
 			Summary: "Import profiles from a bundle (--overwrite replaces\n" +
 				"existing ones)",
-			Flags: []cli.Flag{{Name: "--overwrite", Desc: "Replace existing profiles"}},
-			Args:  []cli.ArgKind{cli.ArgFile},
-			Run:   func(c cli.Ctx) error { return profile.Import(c.Arg(0), c.Has("--overwrite")) },
+			Flags:    []cli.Flag{{Name: "--overwrite", Desc: "Replace existing profiles"}},
+			Complete: cli.Args(files), // the bundle file
+			Run:      func(c cli.Ctx) error { return profile.Import(c.Arg(0), c.Has("--overwrite")) },
 		},
 		&cli.Command{
 			Name:    "register",
@@ -146,3 +142,10 @@ func buildApp() *cli.App {
 	)
 	return app
 }
+
+// profiles and files are this tool's per-argument completers, used with
+// cli.Args. profiles reads the saved profile list fresh on each call, so
+// completion always reflects what is on disk; files defers to the shell's own
+// filename completion.
+func profiles() ([]string, bool) { return profile.Names(), false }
+func files() ([]string, bool)    { return nil, true }
