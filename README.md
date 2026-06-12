@@ -23,6 +23,22 @@ curl -fsSL https://raw.githubusercontent.com/Samseys/anthropic-account-switcher/
 
 Open a new terminal afterwards so the `PATH` change applies.
 
+### Nightly builds
+
+Every push to `main` publishes a rolling [`nightly`](https://github.com/Samseys/anthropic-account-switcher/releases/tag/nightly)
+pre-release. It is opt-in: `claude-acc update` and the default installer always
+track stable releases, so you never get nightly by accident. To install it:
+
+```powershell
+# Windows (PowerShell)
+$env:CLAUDE_ACC_NIGHTLY = '1'; irm https://raw.githubusercontent.com/Samseys/anthropic-account-switcher/main/install.ps1 | iex
+```
+
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/Samseys/anthropic-account-switcher/main/install.sh | sh -s -- --nightly
+```
+
 ### Manual install
 
 Download the binary for your platform from the

@@ -2,7 +2,12 @@
 # One-line installer for claude-acc on macOS and Linux.
 #   curl -fsSL https://raw.githubusercontent.com/Samseys/anthropic-account-switcher/main/install.sh | sh
 #
-# Downloads the latest release binary, verifies it against the published
+# To install the rolling nightly pre-release instead of the latest stable
+# release, set the env var or pass --nightly:
+#   curl -fsSL https://.../install.sh | CLAUDE_ACC_NIGHTLY=1 sh
+#   curl -fsSL https://.../install.sh | sh -s -- --nightly
+#
+# Downloads the selected release binary, verifies it against the published
 # SHA256SUMS, installs it into ~/.local/bin, then runs `register` to put that
 # directory on PATH. The installer owns file placement: the binary never copies
 # or rewrites itself.
@@ -25,12 +30,20 @@ case "$arch" in
 esac
 
 asset="claude-acc_${os}_${arch}"
-base="https://github.com/${repo}/releases/latest/download"
+
+# Nightly is an opt-in rolling pre-release; everyone else tracks latest stable.
+channel="latest"
+if [ "${CLAUDE_ACC_NIGHTLY:-}" = "1" ] || [ "${1:-}" = "--nightly" ] || [ "${1:-}" = "-n" ]; then
+  channel="nightly"
+  base="https://github.com/${repo}/releases/download/nightly"
+else
+  base="https://github.com/${repo}/releases/latest/download"
+fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-echo "Downloading ${asset} ..."
+echo "Downloading ${asset} (${channel}) ..."
 curl -fsSL "${base}/${asset}"     -o "${tmp}/${asset}"
 curl -fsSL "${base}/SHA256SUMS"   -o "${tmp}/SHA256SUMS"
 

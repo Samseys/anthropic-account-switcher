@@ -1,17 +1,30 @@
 # One-line installer for claude-acc on Windows.
 #   irm https://raw.githubusercontent.com/Samseys/anthropic-account-switcher/main/install.ps1 | iex
 #
-# Downloads the latest release binary for this machine's architecture, verifies
+# To install the rolling nightly pre-release instead of the latest stable
+# release, set the env var first (works through the piped one-liner):
+#   $env:CLAUDE_ACC_NIGHTLY = '1'; irm https://.../install.ps1 | iex
+#
+# Downloads the selected release binary for this machine's architecture, verifies
 # it against the published SHA256SUMS, installs it into %LOCALAPPDATA%\claude-acc,
 # then runs `register` to put that directory on PATH. The installer owns file
 # placement: the binary never copies or rewrites itself.
+param([switch]$Nightly)
 
 $ErrorActionPreference = 'Stop'
 $repo = 'Samseys/anthropic-account-switcher'
 
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
 $asset = "claude-acc_windows_$arch.exe"
-$base  = "https://github.com/$repo/releases/latest/download"
+
+# Nightly is an opt-in rolling pre-release; everyone else tracks latest stable.
+if ($Nightly -or $env:CLAUDE_ACC_NIGHTLY -eq '1') {
+  $channel = 'nightly'
+  $base = "https://github.com/$repo/releases/download/nightly"
+} else {
+  $channel = 'latest'
+  $base = "https://github.com/$repo/releases/latest/download"
+}
 
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "claude-acc-install"
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue -LiteralPath $tmp
@@ -19,7 +32,7 @@ New-Item -ItemType Directory -Path $tmp | Out-Null
 $binPath  = Join-Path $tmp $asset
 $sumsPath = Join-Path $tmp 'SHA256SUMS'
 
-Write-Host "Downloading $asset ..."
+Write-Host "Downloading $asset ($channel) ..."
 Invoke-WebRequest -Uri "$base/$asset"      -OutFile $binPath  -UseBasicParsing
 Invoke-WebRequest -Uri "$base/SHA256SUMS"  -OutFile $sumsPath -UseBasicParsing
 
