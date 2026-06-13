@@ -39,6 +39,12 @@ func installedBinaryPath() string {
 	return filepath.Join(installDir(), name)
 }
 
+// InstallDir and InstalledBinaryPath expose the managed install location so the
+// build tool (scripts/build install) places the local build exactly where
+// register expects it — one source of truth, no drift.
+func InstallDir() string          { return installDir() }
+func InstalledBinaryPath() string { return installedBinaryPath() }
+
 // Register puts the per-user bin directory on PATH and installs shell completion.
 // Does not copy or rewrite any executable — the installer script does that.
 func Register() error {
@@ -69,6 +75,14 @@ func Register() error {
 	} else {
 		fmt.Print(msg)
 	}
+
+	// The usage status line is likewise best-effort: a malformed settings.json or
+	// a user's own status line must not fail register.
+	if msg, err := InstallStatusLine(); err != nil {
+		fmt.Printf("Note: skipped the usage status line (%v).\n", err)
+	} else {
+		fmt.Print(msg)
+	}
 	return nil
 }
 
@@ -91,6 +105,9 @@ func Unregister(purge bool) error {
 	}
 	_ = removeUserPath(dir)
 	removeCompletion()
+	if msg, _ := UninstallStatusLine(); msg != "" {
+		fmt.Print(msg)
+	}
 
 	if removedBinary || !paths.FileExists(dst) {
 		removeInstallDir(dir)

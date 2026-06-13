@@ -35,11 +35,12 @@ func VersionString() string {
 // Vars (not consts) so tests can redirect them to a scratch directory.
 // Honors CLAUDE_CONFIG_DIR exactly as Claude Code does.
 var (
-	Home       = mustHome()
-	ClaudeDir  = defaultClaudeDir()
-	CredFile   = filepath.Join(ClaudeDir, ".credentials.json")
-	ConfigFile = defaultConfigFile()
-	ProfileDir = filepath.Join(ClaudeDir, "account-profiles")
+	Home         = mustHome()
+	ClaudeDir    = defaultClaudeDir()
+	CredFile     = filepath.Join(ClaudeDir, ".credentials.json")
+	ConfigFile   = defaultConfigFile()
+	ProfileDir   = filepath.Join(ClaudeDir, "account-profiles")
+	SettingsFile = filepath.Join(ClaudeDir, "settings.json")
 )
 
 func defaultClaudeDir() string {
