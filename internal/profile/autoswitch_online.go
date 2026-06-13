@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Samseys/anthropic-account-switcher/internal/paths"
+	"github.com/Samseys/anthropic-account-switcher/internal/proc"
 	"github.com/Samseys/anthropic-account-switcher/internal/store"
 	"github.com/Samseys/anthropic-account-switcher/internal/usage"
 )
@@ -115,37 +116,31 @@ func persistProfileToken(dir string, oldCreds []byte, tok usage.Token) ([]byte, 
 	return merged, nil
 }
 
-// refreshUsageOnline replaces profiles' cached usage with a live endpoint
-// reading. With force (`list --refresh`) it polls every profile; otherwise it
-// refreshes a profile only when its data is no longer trustworthy — its access
-// token has expired, or its usage reading is missing or older than
+// refreshUsageOnline replaces the *inactive* profiles' cached usage with a live
+// endpoint reading. With force (`list --refresh`) it polls every inactive profile;
+// otherwise it refreshes one only when its data is no longer trustworthy — its
+// access token has expired, or its usage reading is missing or older than
 // cacheStaleAfter — so a plain `list` shows current numbers (and quietly renews a
-// lapsed token) without polling on every invocation. The active account is polled
-// read-only via fetchActiveOnline (Claude Code owns and rotates its live token,
-// so we never refresh or rewrite it); inactive accounts refresh and persist their
-// own token as needed, and the renewed expiry is reflected back into the row.
-// Each fresh reading is also written to the profile's cache. Failures warn and
-// leave the cached reading in place.
+// lapsed token) without polling on every invocation. Inactive accounts refresh and
+// persist their own token as needed, and the renewed expiry is reflected back into
+// the row. The active account is handled separately by refreshActiveUsageIfStale
+// (read-only; Claude Code owns its live token). Each fresh reading is also written
+// to the profile's cache. Failures warn and leave the cached reading in place.
 func refreshUsageOnline(infos []profileInfo, force bool) {
 	ctx := context.Background()
 	for i := range infos {
 		p := &infos[i]
+		if p.Active {
+			continue // the active account is refreshed via refreshActiveUsageIfStale
+		}
 		expired := p.TokenExpiresAt != nil && p.TokenExpiresAt.Before(time.Now())
 		stale := p.UsageRecordedAt == nil || time.Since(*p.UsageRecordedAt) > cacheStaleAfter
 		if !force && !expired && !stale {
 			continue // default: only refresh expired or stale data
 		}
 
-		var (
-			rep *usage.Report
-			err error
-		)
-		if p.Active {
-			rep, err = fetchActiveOnline(ctx) // read-only; never refreshes the live token
-		} else {
-			rep, err = fetchProfileOnline(ctx, p.Name)
-			p.TokenExpiresAt = profileTokenExpiry(profilePath(p.Name)) // may have been renewed
-		}
+		rep, err := fetchProfileOnline(ctx, p.Name)
+		p.TokenExpiresAt = profileTokenExpiry(profilePath(p.Name)) // may have been renewed by the refresh
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not refresh usage for %q: %v\n", p.Name, err)
 			continue
@@ -154,6 +149,45 @@ func refreshUsageOnline(infos []profileInfo, force bool) {
 		p.FiveHour, p.SevenDay, p.UsageRecordedAt = rep.FiveHour, rep.SevenDay, &t
 		recordProfileUsage(p.Name, rep.FiveHour, rep.SevenDay)
 	}
+}
+
+// shouldPollActive decides whether to poll the active account's usage online now.
+// The sensor keeps the reading warm in the terminal, but not in the VSCode panel,
+// so the read paths fall back to the endpoint when the local reading is older than
+// activeStaleAfter — while Claude Code is running (it owns and keeps the live token
+// fresh) and no faster than usage.MinInterval. force (`list --refresh`) bypasses
+// all three gates.
+func shouldPollActive(lastRecorded time.Time, haveReading, force bool) bool {
+	if force {
+		return true
+	}
+	if haveReading && time.Since(lastRecorded) <= activeStaleAfter {
+		return false
+	}
+	return proc.ClaudeRunning() && !recentActivePoll()
+}
+
+// refreshActiveUsageIfStale polls the active account's usage from the endpoint and
+// records it (to the global state file and the active profile's cache) when the
+// local reading has gone stale. It is the VSCode-panel counterpart to the sensor:
+// read-only against the live credentials (never refreshes or rewrites them) and
+// best-effort — on any failure it leaves the cached reading untouched and stays
+// silent, since this runs behind `usage`/`list` that the panel polls on a timer.
+func refreshActiveUsageIfStale(force bool) {
+	active := activeProfile()
+	if active == "" {
+		return
+	}
+	snap, ok := readUsageState()
+	if !shouldPollActive(snap.UpdatedAt, ok && snap.Account == active, force) {
+		return
+	}
+	markActivePoll() // stamp the attempt first, so a failing poll backs off too
+	rep, err := fetchActiveOnline(context.Background())
+	if err != nil {
+		return
+	}
+	recordUsage(usageSnapshot{Account: active, FiveHour: rep.FiveHour, SevenDay: rep.SevenDay, UpdatedAt: time.Now()})
 }
 
 // evaluateOnline polls the active account's usage from the endpoint, records it

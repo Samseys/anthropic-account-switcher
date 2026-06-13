@@ -356,6 +356,24 @@ type profileInfo struct {
 	UsageRecordedAt *time.Time    `json:"usageRecordedAt,omitempty"`
 }
 
+// liveTokenExpiry reads the active account's OAuth access-token expiry from the
+// *live* credentials, or nil when unreadable/absent. The active account's
+// snapshot is stale (Claude Code rotates the live token in place without
+// re-saving the profile), so the live credentials are the only trustworthy
+// source of its real expiry.
+func liveTokenExpiry() *time.Time {
+	raw, ok := store.TryReadCreds()
+	if !ok {
+		return nil
+	}
+	creds, err := usage.ParseCredentials(raw)
+	if err != nil || creds.ExpiresAt.IsZero() {
+		return nil
+	}
+	t := creds.ExpiresAt
+	return &t
+}
+
 // profileTokenExpiry reads a profile's OAuth access-token expiry from its
 // snapshot, or nil when absent/unreadable.
 func profileTokenExpiry(dir string) *time.Time {
@@ -390,6 +408,13 @@ func gatherProfiles() []profileInfo {
 			p.SavedAt = &t
 		}
 		p.TokenExpiresAt = profileTokenExpiry(dir)
+		if p.Active {
+			// The active account's snapshot expiry is stale — Claude Code rotates
+			// the live token in place — so read the real expiry from live creds.
+			if exp := liveTokenExpiry(); exp != nil {
+				p.TokenExpiresAt = exp
+			}
+		}
 		if snap, ok := readProfileUsageCache(name); ok {
 			t := snap.UpdatedAt
 			p.FiveHour, p.SevenDay, p.UsageRecordedAt = snap.FiveHour, snap.SevenDay, &t
@@ -403,9 +428,11 @@ func gatherProfiles() []profileInfo {
 // with stale or expired data are refreshed from the endpoint automatically;
 // refresh forces a live usage poll of every account.
 func List(asJSON, refresh bool) error {
+	// Refresh the active account online first (when its sensor reading is stale),
+	// so the row gatherProfiles reads below is current; then refresh stale/expired
+	// candidates. --refresh forces a live poll of every account.
+	refreshActiveUsageIfStale(refresh)
 	infos := gatherProfiles()
-	// Refresh stale/expired data by default; --refresh forces a live poll of every
-	// account.
 	refreshUsageOnline(infos, refresh)
 
 	if asJSON {

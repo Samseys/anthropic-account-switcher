@@ -1,0 +1,86 @@
+package profile
+
+import (
+	"testing"
+	"time"
+)
+
+// TestDecideWatchAction covers the watch loop's branch decision, with emphasis on
+// the CLI↔panel handoff: once the status-line sensor goes quiet (you closed the
+// CLI and moved to the VSCode panel, which never runs it), the watcher must fall
+// back to online polling instead of stalling on the last sensor reading.
+func TestDecideWatchAction(t *testing.T) {
+	const active = "personal"
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	snap := func(account string, age time.Duration) usageSnapshot {
+		return usageSnapshot{Account: account, UpdatedAt: now.Add(-age)}
+	}
+
+	cases := []struct {
+		name          string
+		snap          usageSnapshot
+		ok            bool
+		lastSeen      time.Time
+		lastOnline    time.Time
+		claudeRunning bool
+		once          bool
+		want          watchAction
+	}{
+		{
+			name: "fresh sensor reading, not yet seen -> snapshot",
+			snap: snap(active, 30*time.Second), ok: true,
+			lastSeen: now.Add(-5 * time.Minute), want: actSnapshot,
+		},
+		{
+			name: "fresh sensor reading already processed -> none",
+			snap: snap(active, 30*time.Second), ok: true,
+			lastSeen: now.Add(-30 * time.Second), want: actNone,
+		},
+		{
+			// The handoff: CLI closed, sensor quiet >2min, VSCode (claude) running.
+			// The old 10min window left this idle; now it polls online.
+			name: "sensor quiet, claude running, poll due -> online",
+			snap: snap(active, 5*time.Minute), ok: true,
+			lastOnline: now.Add(-2 * time.Minute), claudeRunning: true, want: actOnline,
+		},
+		{
+			name: "sensor quiet but claude not running -> none",
+			snap: snap(active, 5*time.Minute), ok: true,
+			lastOnline: now.Add(-2 * time.Minute), claudeRunning: false, want: actNone,
+		},
+		{
+			name: "sensor quiet, claude running, but polled too recently -> none",
+			snap: snap(active, 5*time.Minute), ok: true,
+			lastOnline: now.Add(-30 * time.Second), claudeRunning: true, want: actNone,
+		},
+		{
+			name: "reading is for a different account -> treated as quiet -> online",
+			snap: snap("ducknet", 30*time.Second), ok: true,
+			lastOnline: now.Add(-2 * time.Minute), claudeRunning: true, want: actOnline,
+		},
+		{
+			name: "no state file, claude running -> online",
+			snap: usageSnapshot{}, ok: false,
+			lastOnline: now.Add(-2 * time.Minute), claudeRunning: true, want: actOnline,
+		},
+		{
+			name: "once forces snapshot even when already seen",
+			snap: snap(active, 30*time.Second), ok: true,
+			lastSeen: now.Add(-30 * time.Second), once: true, want: actSnapshot,
+		},
+		{
+			name: "once forces online when quiet, regardless of claude running",
+			snap: snap(active, 5*time.Minute), ok: true,
+			claudeRunning: false, once: true, want: actOnline,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := decideWatchAction(tc.snap, tc.ok, active, now, tc.lastSeen, tc.lastOnline, tc.claudeRunning, tc.once)
+			if got != tc.want {
+				t.Errorf("decideWatchAction = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

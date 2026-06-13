@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -28,7 +29,12 @@ import (
 // Overridable in tests; vars (not consts) so httptest can redirect them.
 var (
 	usageURL = "https://api.anthropic.com/api/oauth/usage"
-	tokenURL = "https://platform.claude.com/v1/oauth/token"
+	// Token refresh must hit api.anthropic.com, NOT platform.claude.com: the
+	// latter sits behind an edge rule that returns a canned rate_limit_error
+	// (HTTP 429, no request-id) to every caller regardless of credentials,
+	// protocol, headers, or TLS fingerprint. api.anthropic.com reaches the real
+	// OAuth app (a bad token there gets a proper invalid_grant with a request-id).
+	tokenURL = "https://api.anthropic.com/v1/oauth/token"
 )
 
 // SetEndpointsForTest points the usage and token URLs at test servers and returns
@@ -71,6 +77,32 @@ func userAgent() string {
 	return "claude-code/" + defaultClaudeCodeVersion
 }
 
+// rateLimited wraps ErrRateLimited with the server's stated reset window, read
+// from the standard rate-limit headers, so callers can report (and back off
+// until) the actual retry time instead of guessing. Anthropic sends a unified
+// reset as an epoch second; a plain Retry-After (delta seconds or HTTP date) is
+// honored as a fallback.
+func rateLimited(h http.Header) error {
+	if v := h.Get("Anthropic-Ratelimit-Unified-Reset"); v != "" {
+		if sec, err := strconv.ParseInt(v, 10, 64); err == nil {
+			if d := time.Until(time.Unix(sec, 0)); d > 0 {
+				return fmt.Errorf("%w (resets in ~%s)", ErrRateLimited, d.Round(time.Second))
+			}
+		}
+	}
+	if v := h.Get("Retry-After"); v != "" {
+		if sec, err := strconv.Atoi(v); err == nil {
+			return fmt.Errorf("%w (retry after %ds)", ErrRateLimited, sec)
+		}
+		if t, err := http.ParseTime(v); err == nil {
+			if d := time.Until(t); d > 0 {
+				return fmt.Errorf("%w (retry after ~%s)", ErrRateLimited, d.Round(time.Second))
+			}
+		}
+	}
+	return ErrRateLimited
+}
+
 var httpClient = &http.Client{Timeout: 15 * time.Second}
 
 // Fetch queries the usage endpoint with the given OAuth access token.
@@ -97,7 +129,7 @@ func Fetch(ctx context.Context, accessToken string) (*Report, error) {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return nil, ErrUnauthorized
 	case http.StatusTooManyRequests:
-		return nil, ErrRateLimited
+		return nil, rateLimited(resp.Header)
 	default:
 		return nil, fmt.Errorf("usage request failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
@@ -167,6 +199,12 @@ func RefreshToken(ctx context.Context, refreshToken string) (Token, error) {
 		_ = json.Unmarshal(body, &e)
 		if e.Error == "invalid_grant" {
 			return Token{}, ErrRefreshRejected
+		}
+		// A genuine rate limit from the OAuth app: surface it as ErrRateLimited
+		// (with any reset window) so callers back off instead of re-hammering the
+		// endpoint and printing the raw 429 body.
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return Token{}, rateLimited(resp.Header)
 		}
 		return Token{}, fmt.Errorf("token refresh failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}

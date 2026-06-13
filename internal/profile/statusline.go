@@ -39,10 +39,45 @@ func usageStateFile() string { return filepath.Join(paths.ProfileDir, ".usage-st
 // so the poll cadence is cheap; the staleness bounds keep us from acting on data
 // left over from an idle or long-past session.
 const (
-	watchFileInterval = 5 * time.Second  // how often to re-read the local state file
-	stateStaleAfter   = 10 * time.Minute // ignore active-account usage older than this
-	cacheStaleAfter   = 6 * time.Hour    // ignore a candidate's cached usage older than this
+	watchFileInterval = 5 * time.Second // how often to re-read the local state file
+	// sensorQuietWindow is how long the watcher keeps trusting the status-line
+	// sensor's reading before falling back to the online endpoint. The CLI sensor
+	// writes on every message, so a gap longer than this means it has gone quiet —
+	// e.g. you closed the CLI and moved to the VSCode panel (which never runs the
+	// sensor). Kept short so that handoff is caught in ~2min instead of stalling on
+	// a reading that is minutes out of date.
+	sensorQuietWindow = 2 * time.Minute
+	cacheStaleAfter   = 6 * time.Hour // ignore a candidate's cached usage older than this
+	// activeStaleAfter triggers an online re-poll of the active account when its
+	// locally recorded reading is older than this. Short, because the read paths
+	// (`usage`, `list`) must show near-live data in the VSCode panel, where the
+	// status-line sensor never runs to keep the reading current. The poll itself
+	// is still throttled to usage.MinInterval (see recentActivePoll).
+	activeStaleAfter = 2 * time.Minute
 )
+
+// activePollMarker stamps the last time a read path polled the active account
+// online. It throttles those polls to usage.MinInterval across separate process
+// invocations (each `usage`/`list` is a fresh process) and, crucially, on the
+// *attempt* — so a failing poll still backs off instead of hitting the endpoint
+// on every panel tick.
+func activePollMarker() string { return filepath.Join(paths.ProfileDir, ".active-poll") }
+
+func recentActivePoll() bool {
+	b, err := os.ReadFile(activePollMarker())
+	if err != nil {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(string(b)))
+	if err != nil {
+		return false
+	}
+	return time.Since(t) < usage.MinInterval
+}
+
+func markActivePoll() {
+	_ = paths.WriteFileAtomic(activePollMarker(), []byte(time.Now().Format(time.RFC3339)), 0o600)
+}
 
 // StatusLine implements the `statusline` command. It reads the JSON Claude Code
 // pipes on stdin, prints a one-line usage summary for the status bar, and records
@@ -141,6 +176,37 @@ func readSnapshot(path string) (usageSnapshot, bool) {
 	return s, true
 }
 
+// watchAction is what one tick of the watch loop should do.
+type watchAction int
+
+const (
+	actNone     watchAction = iota // nothing new to act on this tick
+	actSnapshot                    // act on the sensor's recorded reading
+	actOnline                      // poll the online endpoint
+)
+
+// decideWatchAction is the watch loop's branch decision, pulled out as a pure
+// function so the CLI↔panel handoff is unit-testable without touching the clock,
+// the filesystem, or process detection.
+//
+// It trusts the status-line sensor only while it is actively writing (within
+// sensorQuietWindow); once the sensor goes quiet — e.g. you closed the CLI and
+// moved to the VSCode panel, which never runs it — it falls back to polling the
+// endpoint (while Claude Code is running, no faster than endpointPollInterval)
+// instead of stalling on a reading that is going stale. once forces a single
+// evaluation regardless of cadence.
+func decideWatchAction(snap usageSnapshot, ok bool, active string, now, lastSeen, lastOnline time.Time, claudeRunning, once bool) watchAction {
+	sensorRecent := ok && snap.Account == active && now.Sub(snap.UpdatedAt) <= sensorQuietWindow
+	switch {
+	case sensorRecent && (once || snap.UpdatedAt.After(lastSeen)):
+		return actSnapshot
+	case !sensorRecent && (once || (claudeRunning && now.Sub(lastOnline) >= endpointPollInterval)):
+		return actOnline
+	default:
+		return actNone
+	}
+}
+
 // AutoSwitchOptions configures the auto-switcher.
 type AutoSwitchOptions struct {
 	Threshold float64 // percent (0–100) at which to switch; default 90
@@ -171,14 +237,11 @@ func AutoSwitch(opts AutoSwitchOptions) error {
 	var lastSeen, lastOnline time.Time
 	for {
 		snap, ok := readUsageState()
-		// The sensor reading is usable only if it is recent and for the account
-		// that is still active; otherwise fall back to the online endpoint.
-		fresh := ok && snap.Account == activeProfile() && time.Since(snap.UpdatedAt) <= stateStaleAfter
-		switch {
-		case fresh && (opts.Once || snap.UpdatedAt.After(lastSeen)):
+		switch decideWatchAction(snap, ok, activeProfile(), time.Now(), lastSeen, lastOnline, proc.ClaudeRunning(), opts.Once) {
+		case actSnapshot:
 			lastSeen = snap.UpdatedAt
 			evaluateSnapshot(ctx, opts, snap)
-		case !fresh && (opts.Once || (proc.ClaudeRunning() && time.Since(lastOnline) >= endpointPollInterval)):
+		case actOnline:
 			lastOnline = time.Now()
 			evaluateOnline(ctx, opts)
 		}

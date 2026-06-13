@@ -60,6 +60,9 @@ func windowPct(w *usage.Window) float64 {
 // Usage prints the last-known usage the status-line sensor recorded — for the
 // active account, or every saved profile with all set.
 func Usage(asJSON, all bool) error {
+	// Bring the active account's reading up to date when the sensor has not kept it
+	// warm (the VSCode panel). Best-effort and throttled; reads below are local.
+	refreshActiveUsageIfStale(false)
 	if all {
 		return usageAll(asJSON)
 	}
@@ -95,7 +98,7 @@ func usageActive(asJSON bool) error {
 	fmt.Printf("Usage for the active account (%s):\n\n", snap.Account)
 	printUsageWindow("5-hour", snap.FiveHour, on)
 	printUsageWindow("7-day", snap.SevenDay, on)
-	fmt.Printf("\n  %s\n", dimIf(on, "recorded "+humanAgo(snap.UpdatedAt)+" by the statusline sensor"))
+	fmt.Printf("\n  %s\n", dimIf(on, "recorded "+humanAgo(snap.UpdatedAt)))
 	return nil
 }
 
@@ -141,7 +144,7 @@ func usageAll(asJSON bool) error {
 		maxName = max(maxName, len(n))
 	}
 	on := usageColorOn()
-	fmt.Println("Usage by profile (last recorded by the statusline sensor):")
+	fmt.Println("Usage by profile (last recorded reading):")
 	fmt.Println()
 	for _, r := range rows {
 		mark := "  "
