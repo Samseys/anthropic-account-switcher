@@ -18,6 +18,7 @@ import (
 	"github.com/Samseys/anthropic-account-switcher/internal/paths"
 	"github.com/Samseys/anthropic-account-switcher/internal/proc"
 	"github.com/Samseys/anthropic-account-switcher/internal/store"
+	"github.com/Samseys/anthropic-account-switcher/internal/usage"
 )
 
 // Profile directory contents (under ~/.claude/account-profiles/<name>/):
@@ -345,11 +346,33 @@ type currentInfo struct {
 }
 
 type profileInfo struct {
-	Name           string     `json:"name"`
-	Email          string     `json:"email,omitempty"`
-	Active         bool       `json:"active"`
-	SavedAt        *time.Time `json:"savedAt,omitempty"`
-	TokenExpiresAt *time.Time `json:"tokenExpiresAt,omitempty"`
+	Name            string        `json:"name"`
+	Email           string        `json:"email,omitempty"`
+	Active          bool          `json:"active"`
+	SavedAt         *time.Time    `json:"savedAt,omitempty"`
+	TokenExpiresAt  *time.Time    `json:"tokenExpiresAt,omitempty"`
+	FiveHour        *usage.Window `json:"fiveHour,omitempty"`
+	SevenDay        *usage.Window `json:"sevenDay,omitempty"`
+	UsageRecordedAt *time.Time    `json:"usageRecordedAt,omitempty"`
+}
+
+// profileTokenExpiry reads a profile's OAuth access-token expiry from its
+// snapshot, or nil when absent/unreadable.
+func profileTokenExpiry(dir string) *time.Time {
+	creds, err := readProfileCreds(dir)
+	if err != nil {
+		return nil
+	}
+	m := expiresAtRe.FindSubmatch(creds)
+	if m == nil {
+		return nil
+	}
+	ms, err := strconv.ParseInt(string(m[1]), 10, 64)
+	if err != nil {
+		return nil
+	}
+	t := time.UnixMilli(ms)
+	return &t
 }
 
 func gatherProfiles() []profileInfo {
@@ -366,22 +389,24 @@ func gatherProfiles() []profileInfo {
 			t := fi.ModTime()
 			p.SavedAt = &t
 		}
-		if creds, err := readProfileCreds(dir); err == nil {
-			if m := expiresAtRe.FindSubmatch(creds); m != nil {
-				if ms, err := strconv.ParseInt(string(m[1]), 10, 64); err == nil {
-					t := time.UnixMilli(ms)
-					p.TokenExpiresAt = &t
-				}
-			}
+		p.TokenExpiresAt = profileTokenExpiry(dir)
+		if snap, ok := readProfileUsageCache(name); ok {
+			t := snap.UpdatedAt
+			p.FiveHour, p.SevenDay, p.UsageRecordedAt = snap.FiveHour, snap.SevenDay, &t
 		}
 		infos = append(infos, p)
 	}
 	return infos
 }
 
-// List prints the saved profiles (or a JSON array when asJSON is set).
-func List(asJSON bool) error {
+// List prints the saved profiles (or a JSON array when asJSON is set). Profiles
+// with stale or expired data are refreshed from the endpoint automatically;
+// refresh forces a live usage poll of every account.
+func List(asJSON, refresh bool) error {
 	infos := gatherProfiles()
+	// Refresh stale/expired data by default; --refresh forces a live poll of every
+	// account.
+	refreshUsageOnline(infos, refresh)
 
 	if asJSON {
 		return paths.PrintJSON(infos)
@@ -398,6 +423,15 @@ func List(asJSON bool) error {
 		maxEmail = max(maxEmail, len(emailOrUnknown(p.Email)))
 	}
 
+	on := usageColorOn()
+	anyUsage := false
+	for _, p := range infos {
+		if p.FiveHour != nil || p.SevenDay != nil {
+			anyUsage = true
+			break
+		}
+	}
+
 	fmt.Println("Saved account profiles:")
 	fmt.Println()
 	anyExpired := false
@@ -408,6 +442,15 @@ func List(asJSON bool) error {
 		}
 		email := emailOrUnknown(p.Email)
 		line := fmt.Sprintf("  %s%-*s  %-*s", mark, maxName, p.Name, maxEmail, email)
+		// Reserve a fixed-width usage column when any profile has a reading, so the
+		// trailing "saved"/"[token expired]" stay aligned across rows.
+		if anyUsage {
+			if p.FiveHour != nil || p.SevenDay != nil {
+				line += "  " + usageBrief(p.FiveHour, p.SevenDay, on)
+			} else {
+				line += "  " + strings.Repeat(" ", usageBriefCols)
+			}
+		}
 		if p.SavedAt != nil {
 			line += "  saved " + p.SavedAt.Format("2006-01-02 15:04")
 		}

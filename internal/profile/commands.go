@@ -1,6 +1,11 @@
 package profile
 
-import "github.com/Samseys/anthropic-account-switcher/internal/cli"
+import (
+	"fmt"
+
+	"github.com/Samseys/anthropic-account-switcher/internal/cli"
+	"github.com/Samseys/anthropic-account-switcher/internal/install"
+)
 
 // Commands returns the account-profile subcommands, each declared next to the
 // handler it drives. main wires them in with app.Add(profile.Commands()...),
@@ -17,13 +22,20 @@ func Commands() []*cli.Command {
 			Run: func(c cli.Ctx) error { return Save(c.Arg(0)) },
 		},
 		{
-			Name: "list", Aliases: []string{"ls"}, Usage: "[--json]",
+			Name: "list", Aliases: []string{"ls"}, Usage: "[--json] [--refresh]",
 			Summary: "List saved profiles",
 			Details: "List every saved profile with its email and when it was saved; * marks the\n" +
-				"currently active account, and [token expired] flags a profile whose access\n" +
-				"token has lapsed (Claude Code refreshes it after you switch).",
-			Flags: []cli.Flag{{Name: "--json", Desc: "Machine-readable output"}},
-			Run:   func(c cli.Ctx) error { return List(c.Has("--json")) },
+				"currently active account. A profile whose usage is stale or whose access\n" +
+				"token has expired is refreshed automatically from Anthropic's usage endpoint,\n" +
+				"reusing the existing access token when it is still valid and only renewing it\n" +
+				"when it has (nearly) expired. The active account's token is left to Claude\n" +
+				"Code, so it alone can still show [token expired].\n\n" +
+				"--refresh forces a live usage poll of every account regardless of staleness.",
+			Flags: []cli.Flag{
+				{Name: "--json", Desc: "Machine-readable output"},
+				{Name: "--refresh", Desc: "Poll the usage endpoint for current usage"},
+			},
+			Run: func(c cli.Ctx) error { return List(c.Has("--json"), c.Has("--refresh")) },
 		},
 		{
 			Name: "switch", Aliases: []string{"use"}, Usage: "[name|-]",
@@ -95,6 +107,88 @@ func Commands() []*cli.Command {
 			Flags:    []cli.Flag{{Name: "--overwrite", Desc: "Replace existing profiles"}},
 			Complete: cli.Args(files), // the bundle file
 			Run:      func(c cli.Ctx) error { return Import(c.Arg(0), c.Has("--overwrite")) },
+		},
+		{
+			Name: "usage", Usage: "[--all] [--json]",
+			Summary: "Show the last recorded rate-limit usage",
+			Details: "Show how much of the 5-hour and 7-day rate-limit windows the active account\n" +
+				"has consumed, as last recorded by the 'statusline' sensor (no network\n" +
+				"call). With --all, report every saved profile from its cached reading. Empty\n" +
+				"until the statusline command has run at least once — see 'help statusline'.",
+			Flags: []cli.Flag{
+				{Name: "--all", Desc: "Report every saved profile"},
+				{Name: "--json", Desc: "Machine-readable output"},
+			},
+			Run: func(c cli.Ctx) error { return Usage(c.Has("--json"), c.Has("--all")) },
+		},
+		{
+			Name: "autoswitch", Aliases: []string{"watch"}, Usage: "[threshold] [--week] [--once] [--dry-run]",
+			Summary: "Auto-switch accounts when usage hits a threshold",
+			Details: "Watch the active account's usage and, when its 5-hour window crosses the\n" +
+				"threshold (default 90%), switch to the saved profile with the most headroom.\n" +
+				"It prefers the reading the 'statusline' sensor records locally (free, never\n" +
+				"rate-limited; see 'help statusline') and falls back to Anthropic's usage\n" +
+				"endpoint when no fresh sensor data is available — e.g. the VSCode panel,\n" +
+				"which never runs status-line commands. Candidate accounts are always ranked\n" +
+				"by their current endpoint usage, since inactive accounts never run the sensor.\n\n" +
+				"--week also trips on the 7-day window; --once checks a single time and\n" +
+				"exits (for cron); --dry-run reports the decision without switching. The\n" +
+				"threshold is an optional positional ('autoswitch 85').",
+			Flags: []cli.Flag{
+				{Name: "--week", Desc: "Also switch on the 7-day window"},
+				{Name: "--once", Desc: "Check once and exit"},
+				{Name: "--dry-run", Desc: "Report the decision without switching"},
+			},
+			Run: func(c cli.Ctx) error {
+				threshold, err := parseThreshold(c.Arg(0))
+				if err != nil {
+					return err
+				}
+				return AutoSwitch(AutoSwitchOptions{
+					Threshold: threshold,
+					Week:      c.Has("--week"),
+					Once:      c.Has("--once"),
+					DryRun:    c.Has("--dry-run"),
+				})
+			},
+		},
+		{
+			Name: "statusline", Meta: true, Usage: "[--install|--uninstall]",
+			Summary: "Status-line sensor for usage / autoswitch",
+			Details: "Powers the usage status line that 'usage' and 'autoswitch' read from.\n\n" +
+				"  --install     add it to ~/.claude/settings.json (preserves other settings;\n" +
+				"                won't overwrite a custom status line)\n" +
+				"  --uninstall   remove it again\n\n" +
+				"With no flags it is the sensor itself: Claude Code pipes its session JSON on\n" +
+				"stdin, and it prints the status-bar line and records the active account's\n" +
+				"usage locally. You normally never run this form by hand.",
+			Flags: []cli.Flag{
+				{Name: "--install", Desc: "Add the status line to settings.json"},
+				{Name: "--uninstall", Desc: "Remove the status line from settings.json"},
+			},
+			Run: func(c cli.Ctx) error {
+				switch {
+				case c.Has("--install"):
+					msg, err := install.InstallStatusLine()
+					if err != nil {
+						return err
+					}
+					fmt.Print(msg)
+					return nil
+				case c.Has("--uninstall"):
+					msg, err := install.UninstallStatusLine()
+					if err != nil {
+						return err
+					}
+					if msg == "" {
+						msg = "No usage status line was configured.\n"
+					}
+					fmt.Print(msg)
+					return nil
+				default:
+					return StatusLine()
+				}
+			},
 		},
 	}
 }
