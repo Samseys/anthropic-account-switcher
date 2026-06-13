@@ -25,6 +25,10 @@ type usageSnapshot struct {
 	FiveHour  *usage.Window `json:"fiveHour"`
 	SevenDay  *usage.Window `json:"sevenDay"`
 	UpdatedAt time.Time     `json:"updatedAt"`
+	// Online marks an endpoint-sourced reading. The watcher writes its own polls
+	// back to the shared state file, so it must not re-read them as a sensor
+	// reading — that double-reports the line. See decideWatchAction.
+	Online bool `json:"online,omitempty"`
 }
 
 // fileUsageCache is the per-profile snapshot; the global state file lives in the profile root.
@@ -174,7 +178,7 @@ const (
 // the endpoint when the sensor goes quiet (e.g. switched to the VSCode panel).
 // once forces a single evaluation regardless of cadence.
 func decideWatchAction(snap usageSnapshot, ok bool, active string, now, lastSeen, lastOnline time.Time, claudeRunning, once bool) watchAction {
-	sensorRecent := ok && snap.Account == active && now.Sub(snap.UpdatedAt) <= sensorQuietWindow
+	sensorRecent := ok && !snap.Online && snap.Account == active && now.Sub(snap.UpdatedAt) <= sensorQuietWindow
 	switch {
 	case sensorRecent && (once || snap.UpdatedAt.After(lastSeen)):
 		return actSnapshot

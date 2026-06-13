@@ -64,6 +64,18 @@ func TestDecideWatchAction(t *testing.T) {
 			lastOnline: now.Add(-2 * time.Minute), claudeRunning: true, want: actOnline,
 		},
 		{
+			// The watcher's own online poll lands in the shared state file; it
+			// must not be re-read as a sensor reading (that double-reported it).
+			name: "recent online snapshot -> not a sensor reading -> online",
+			snap: usageSnapshot{Account: active, UpdatedAt: now.Add(-30 * time.Second), Online: true}, ok: true,
+			lastOnline: now.Add(-2 * time.Minute), claudeRunning: true, want: actOnline,
+		},
+		{
+			name: "recent online snapshot, polled too recently -> none",
+			snap: usageSnapshot{Account: active, UpdatedAt: now.Add(-30 * time.Second), Online: true}, ok: true,
+			lastOnline: now.Add(-30 * time.Second), claudeRunning: true, want: actNone,
+		},
+		{
 			name: "once forces snapshot even when already seen",
 			snap: snap(active, 30*time.Second), ok: true,
 			lastSeen: now.Add(-30 * time.Second), once: true, want: actSnapshot,

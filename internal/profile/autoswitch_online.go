@@ -173,7 +173,7 @@ func refreshActiveUsageIfStale(force bool) {
 	if err != nil {
 		return
 	}
-	recordUsage(usageSnapshot{Account: active, FiveHour: rep.FiveHour, SevenDay: rep.SevenDay, UpdatedAt: time.Now()})
+	recordUsage(usageSnapshot{Account: active, FiveHour: rep.FiveHour, SevenDay: rep.SevenDay, UpdatedAt: time.Now(), Online: true})
 }
 
 // evaluateOnline polls the active account's usage, records it, and switches if it
@@ -192,7 +192,7 @@ func evaluateOnline(ctx context.Context, opts AutoSwitchOptions) {
 		fmt.Fprintf(os.Stderr, "  cannot read active-account usage from the API: %v\n", err)
 		return
 	}
-	recordUsage(usageSnapshot{Account: active, FiveHour: rep.FiveHour, SevenDay: rep.SevenDay, UpdatedAt: time.Now()})
+	recordUsage(usageSnapshot{Account: active, FiveHour: rep.FiveHour, SevenDay: rep.SevenDay, UpdatedAt: time.Now(), Online: true})
 
 	five, seven := windowPct(rep.FiveHour), windowPct(rep.SevenDay)
 	fmt.Printf("[%s] %-16s 5h %3.0f%%  7d %3.0f%%  %s\n",
