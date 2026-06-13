@@ -78,11 +78,14 @@ Needs Go 1.25+. The binary is pure Go (`CGO_ENABLED=0`):
 
 ```bash
 make build      # compile for the current platform into ./bin
+make install    # build, install to the managed location, and register it
 make test       # run tests
 make dist       # cross-compile all targets + SHA256SUMS into ./dist
 ```
 
-Or `go install github.com/Samseys/anthropic-account-switcher@latest`.
+`make install` installs the build you just compiled exactly as the release
+installer would (managed location + PATH + status line), so it's ready to use
+immediately. Or `go install github.com/Samseys/anthropic-account-switcher@latest`.
 
 ## Usage
 
@@ -93,7 +96,9 @@ acc-claude switch [name|-]     # switch to a profile
 acc-claude current [--json]    # show the active account
 acc-claude remove <name>       # delete a saved profile
 acc-claude rename <old> <new>  # rename a saved profile
-acc-claude register            # install onto your PATH
+acc-claude usage [--all]       # show last-recorded 5h/7d usage (--all: every profile)
+acc-claude autoswitch [pct]    # auto-switch at a usage threshold (default 90%)
+acc-claude register            # install onto your PATH (+ usage status line)
 acc-claude unregister          # remove it (--purge also deletes saved profiles)
 acc-claude update [--check]    # check for a newer release and show how to install it
 acc-claude help
@@ -119,6 +124,29 @@ acc-claude switch          # the new account is used on Claude Code's next reque
 No restart needed — Claude Code re-reads the credentials on its next request. If
 a session is already running, quit it only if the switch doesn't stick: a live
 session can overwrite the swapped credentials on its next token refresh.
+
+### Usage limits and auto-switching
+
+Show how much of your 5-hour and 7-day rate-limit windows each account has used,
+and switch accounts automatically before you hit a limit.
+
+```
+acc-claude usage [--all]      # show 5h/7d usage (--all: every profile)
+acc-claude autoswitch [pct]   # switch to a fresher account at a threshold (default 90%)
+```
+
+`acc-claude register` adds a usage readout to Claude Code's status bar, which
+powers these commands (`unregister` removes it; `acc-claude statusline
+--install` / `--uninstall` toggle just the readout). `autoswitch` picks the saved
+profile with the most headroom; `--week` also trips on the 7-day window, `--once`
+checks a single time, and `--dry-run` reports without switching.
+
+`autoswitch` reads the status-line readout when it is available (the terminal CLI
+feeds it for free) and **falls back to Anthropic's usage API** when it isn't — for
+example the VSCode panel, which never runs status-line commands. It also polls the
+API to read the *current* usage of your other saved accounts (which never run the
+status line), so it switches to the one with the most real headroom rather than a
+stale guess. The fallback is throttled and only runs while Claude Code is open.
 
 ## How it works
 
