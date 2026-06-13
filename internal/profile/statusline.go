@@ -213,23 +213,26 @@ func AutoSwitch(opts AutoSwitchOptions) error {
 		fmt.Printf("Watching usage; switching at %.0f%% (%s window). Ctrl-C to stop.\n",
 			opts.Threshold, windowLabel(opts.Week))
 	}
+	// In-place on a terminal; one line per poll when redirected or --once.
+	sw := newStatusWriter(!opts.Once && stdoutIsTerminal())
 	var lastSeen, lastOnline time.Time
 	for {
 		snap, ok := readUsageState()
 		switch decideWatchAction(snap, ok, activeProfile(), time.Now(), lastSeen, lastOnline, proc.ClaudeRunning(), opts.Once) {
 		case actSnapshot:
 			lastSeen = snap.UpdatedAt
-			evaluateSnapshot(ctx, opts, snap)
+			evaluateSnapshot(ctx, opts, sw, snap)
 		case actOnline:
 			lastOnline = time.Now()
-			evaluateOnline(ctx, opts)
+			evaluateOnline(ctx, opts, sw)
 		}
 		if opts.Once {
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			fmt.Println("\nStopped.")
+			sw.commit()
+			fmt.Println("Stopped.")
 			return nil
 		case <-time.After(watchFileInterval):
 		}
@@ -245,18 +248,19 @@ func windowLabel(week bool) string {
 
 // evaluateSnapshot logs and switches on a fresh sensor reading. The caller has
 // already verified the snapshot is current and for the still-active account.
-func evaluateSnapshot(ctx context.Context, opts AutoSwitchOptions, snap usageSnapshot) {
-	five, seven := windowPct(snap.FiveHour), windowPct(snap.SevenDay)
-	fmt.Printf("[%s] %-16s 5h %3.0f%%  7d %3.0f%%\n", snap.UpdatedAt.Local().Format("15:04:05"), snap.Account, five, seven)
-	tripAndSwitch(ctx, opts, snap.Account, five, seven)
+func evaluateSnapshot(ctx context.Context, opts AutoSwitchOptions, sw *statusWriter, snap usageSnapshot) {
+	sw.update(watchLine(snap.UpdatedAt, snap.Account, snap.FiveHour, snap.SevenDay, false))
+	tripAndSwitch(ctx, opts, sw, snap.Account, windowPct(snap.FiveHour), windowPct(snap.SevenDay))
 }
 
 // tripAndSwitch switches when usage crosses the threshold, picking the candidate
-// with the most headroom ranked from current endpoint usage.
-func tripAndSwitch(ctx context.Context, opts AutoSwitchOptions, active string, five, seven float64) {
+// with the most headroom ranked from current endpoint usage. commits the live
+// line first so its messages land on their own row.
+func tripAndSwitch(ctx context.Context, opts AutoSwitchOptions, sw *statusWriter, active string, five, seven float64) {
 	if !(five >= opts.Threshold || (opts.Week && seven >= opts.Threshold)) {
 		return
 	}
+	sw.commit()
 	target, reason, err := chooseTargetOnline(ctx, active, opts.Threshold)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  threshold reached but cannot switch: %v\n", err)

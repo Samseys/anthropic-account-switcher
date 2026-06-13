@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Samseys/anthropic-account-switcher/internal/usage"
 )
@@ -95,6 +96,48 @@ func bar(pct float64, width int) string {
 
 func windowSegment(label string, w *usage.Window) string {
 	return labelledMeter(label, windowPct(w))
+}
+
+// statusWriter rewrites one line in place on a terminal (\r + clear-to-EOL), else
+// prints a line per update so redirected output stays log-friendly. commit ends
+// the live line before any permanent message so it starts on its own row.
+type statusWriter struct {
+	inplace bool
+	live    bool
+}
+
+func newStatusWriter(inplace bool) *statusWriter { return &statusWriter{inplace: inplace} }
+
+func (w *statusWriter) update(s string) {
+	if w.inplace {
+		fmt.Printf("\r\x1b[K%s", s)
+		w.live = true
+		return
+	}
+	fmt.Println(s)
+}
+
+// commit ends a live in-place line; no-op in line mode or when already committed.
+func (w *statusWriter) commit() {
+	if w.live {
+		fmt.Println()
+		w.live = false
+	}
+}
+
+// watchLine renders a readout (time, account, colored 5h/7d meters, (api) tag)
+// in the `usage` command's row style.
+func watchLine(t time.Time, account string, five, seven *usage.Window, online bool) string {
+	on := usageColorOn()
+	m5, p5 := coloredMeter(five, barWidth, on)
+	m7, p7 := coloredMeter(seven, barWidth, on)
+	line := fmt.Sprintf("%s  %-16s  %s %s %s  %s %s %s",
+		dimIf(on, t.Local().Format("15:04:05")), account,
+		dimIf(on, "5h"), m5, p5, dimIf(on, "7d"), m7, p7)
+	if online {
+		line += "  " + dimIf(on, "(api)")
+	}
+	return line
 }
 
 // labelledMeter renders a dim label, colored bar, and colored percent.

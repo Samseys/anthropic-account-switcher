@@ -179,7 +179,7 @@ func refreshActiveUsageIfStale(force bool) {
 // evaluateOnline polls the active account's usage, records it, and switches if it
 // trips the threshold. Fallback for when the sensor has no fresh reading (e.g.
 // the VSCode panel, which never runs status-line commands).
-func evaluateOnline(ctx context.Context, opts AutoSwitchOptions) {
+func evaluateOnline(ctx context.Context, opts AutoSwitchOptions, sw *statusWriter) {
 	active := activeProfile()
 	if active == "" {
 		if opts.Once {
@@ -189,15 +189,14 @@ func evaluateOnline(ctx context.Context, opts AutoSwitchOptions) {
 	}
 	rep, err := fetchActiveOnline(ctx)
 	if err != nil {
+		sw.commit()
 		fmt.Fprintf(os.Stderr, "  cannot read active-account usage from the API: %v\n", err)
 		return
 	}
 	recordUsage(usageSnapshot{Account: active, FiveHour: rep.FiveHour, SevenDay: rep.SevenDay, UpdatedAt: time.Now(), Online: true})
 
-	five, seven := windowPct(rep.FiveHour), windowPct(rep.SevenDay)
-	fmt.Printf("[%s] %-16s 5h %3.0f%%  7d %3.0f%%  %s\n",
-		time.Now().Local().Format("15:04:05"), active, five, seven, dim("(api)"))
-	tripAndSwitch(ctx, opts, active, five, seven)
+	sw.update(watchLine(time.Now(), active, rep.FiveHour, rep.SevenDay, true))
+	tripAndSwitch(ctx, opts, sw, active, windowPct(rep.FiveHour), windowPct(rep.SevenDay))
 }
 
 // chooseTargetOnline ranks candidates by current endpoint usage, polling each
