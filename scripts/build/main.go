@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	installpkg "github.com/Samseys/anthropic-account-switcher/internal/install"
 )
 
 const (
@@ -57,20 +59,76 @@ func main() {
 	}
 }
 
-// version derives a version from git describe, or "dev" outside a checkout.
-// $VERSION overrides. --match/--exclude restrict the base to stable release
-// tags: nightly tags are version-prefixed (vX.Y.Z-nightly.*) and would
-// otherwise be picked up as the base.
+// version derives a version from git, or "dev" outside a checkout. $VERSION
+// overrides (the release/nightly workflows pass it).
 func version() string {
 	if v := strings.TrimSpace(os.Getenv("VERSION")); v != "" {
 		return strings.TrimPrefix(v, "v")
 	}
-	out, err := exec.Command("git", "describe", "--tags", "--always", "--dirty", "--match", "v[0-9]*", "--exclude", "*-nightly.*").Output()
+	return gitVersion()
+}
+
+// gitVersion turns the git state into a version. A clean checkout exactly on a
+// release tag returns that tag verbatim (e.g. "1.0.6"). Any build *ahead* of the
+// latest tag, or with a dirty tree, is newer than that tag — but semver orders
+// "1.0.6-<suffix>" below "1.0.6", which would make `acc-claude update` nag a dev
+// build to "upgrade" to the very release it is already ahead of. So, exactly like
+// the nightly job (ci.yml), we version it as a prerelease of the *next* patch
+// ("X.Y.(Z+1)-dev.<sha>[.dirty]"): it sorts above the current release and below
+// the next one.
+//
+// --match/--exclude restrict describe to stable release tags; nightly tags are
+// version-prefixed (vX.Y.Z-nightly.*) and would otherwise drift the base up.
+func gitVersion() string {
+	out, err := exec.Command("git", "describe", "--tags", "--long", "--dirty",
+		"--match", "v[0-9]*", "--exclude", "*-nightly.*").Output()
+	desc := strings.TrimSpace(string(out))
+	if err != nil || desc == "" {
+		return untaggedVersion()
+	}
+
+	// desc is "<tag>-<count>-g<sha>" with an optional "-dirty" suffix. The tag may
+	// itself contain '-' (a prerelease tag), so split from the right.
+	dirty := strings.HasSuffix(desc, "-dirty")
+	desc = strings.TrimSuffix(desc, "-dirty")
+	gi := strings.LastIndex(desc, "-g") // sha is hex, so this is the describe separator
+	if gi < 0 {
+		return strings.TrimPrefix(desc, "v")
+	}
+	gsha := desc[gi+1:] // "g<sha>"
+	rest := desc[:gi]   // "<tag>-<count>"
+	ci := strings.LastIndex(rest, "-")
+	if ci < 0 {
+		return strings.TrimPrefix(rest, "v")
+	}
+	count, tag := rest[ci+1:], strings.TrimPrefix(rest[:ci], "v")
+
+	if count == "0" && !dirty {
+		return tag // clean build sitting exactly on a release tag
+	}
+	maj, min, patch := semverParts(tag)
+	suffix := gsha
+	if dirty {
+		suffix += ".dirty"
+	}
+	return fmt.Sprintf("%d.%d.%d-dev.%s", maj, min, patch+1, suffix)
+}
+
+// untaggedVersion handles a checkout with no stable release tag (or no git at
+// all): there is no base to bump, so we anchor at 0.0.1-dev.
+func untaggedVersion() string {
+	out, err := exec.Command("git", "describe", "--tags", "--always", "--dirty").Output()
 	v := strings.TrimSpace(string(out))
 	if err != nil || v == "" {
 		return "dev"
 	}
-	return strings.TrimPrefix(v, "v")
+	dirty := strings.HasSuffix(v, "-dirty")
+	v = strings.TrimSuffix(v, "-dirty")
+	suffix := "g" + v // g-prefix keeps an all-digit short sha a valid identifier
+	if dirty {
+		suffix += ".dirty"
+	}
+	return "0.0.1-dev." + suffix
 }
 
 const versionPkg = "github.com/Samseys/anthropic-account-switcher/internal/paths"
@@ -171,18 +229,38 @@ func build() error {
 	return buildTarget(runtime.GOOS, runtime.GOARCH, out)
 }
 
+// install compiles the current source and installs that build the same way
+// install.ps1/install.sh install a downloaded release: it copies the binary into
+// the managed per-user location and runs `register` (PATH + completion + status
+// line), so the tool is immediately usable. Placement is the build tool's job —
+// the binary still never copies itself.
 func install() error {
-	if runtime.GOOS == "windows" {
-		syso, err := genWindowsResource(runtime.GOARCH)
-		if err != nil {
-			return fmt.Errorf("generating windows resource: %w", err)
-		}
-		defer os.Remove(syso)
+	if err := build(); err != nil {
+		return err
 	}
-	c := exec.Command("go", "install", "-trimpath", "-ldflags", ldflags(), pkg)
+	src := filepath.Join(binDir, binary+exeSuffix(runtime.GOOS))
+	dst := installpkg.InstalledBinaryPath()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	if err := copyExecutable(src, dst); err != nil {
+		return fmt.Errorf("installing %s -> %s: %w (is a running acc-claude holding it open?)", src, dst, err)
+	}
+	fmt.Printf("installed -> %s\n", dst)
+
+	// Run the freshly-installed copy's register, mirroring the install scripts.
+	c := exec.Command(dst, "register")
 	c.Stdout, c.Stderr = os.Stdout, os.Stderr
-	c.Env = append(os.Environ(), "CGO_ENABLED=0")
 	return c.Run()
+}
+
+// copyExecutable copies src over dst, preserving the executable bit on Unix.
+func copyExecutable(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0o755)
 }
 
 func dist() error {

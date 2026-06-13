@@ -14,16 +14,16 @@ all: build
 
 help:
 	@echo "Targets:"
-	@echo "  build     Compile for the current platform into ./bin"
-	@echo "  install   go install into GOBIN/GOPATH"
-	@echo "  dist      Cross-compile every release target + SHA256SUMS into ./dist"
-	@echo "  test      Run tests"
-	@echo "  vet       Run go vet"
-	@echo "  fmt       Format sources in place"
-	@echo "  tidy      Tidy go.mod / go.sum"
-	@echo "  check     vet + test"
-	@echo "  clean     Remove build artifacts"
-	@echo "  version   Print the version that would be embedded"
+	@echo "  build         Compile for the current platform into ./bin"
+	@echo "  install       Build, place in the managed dir, and register (PATH + status line)"
+	@echo "  dist          Cross-compile every release target + SHA256SUMS into ./dist"
+	@echo "  test          Run tests"
+	@echo "  vet           Run go vet"
+	@echo "  fmt           Format sources in place"
+	@echo "  tidy          Tidy go.mod / go.sum"
+	@echo "  check         vet + test"
+	@echo "  clean         Remove build artifacts"
+	@echo "  version       Print the version that would be embedded"
 
 build:
 	$(TOOL) build
