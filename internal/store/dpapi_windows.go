@@ -41,7 +41,6 @@ func ProtectCreds(data []byte) ([]byte, error) {
 	return blobToBytes(&out), nil
 }
 
-// UnprotectCreds reverses ProtectCreds.
 func UnprotectCreds(data []byte) ([]byte, error) {
 	var out windows.DataBlob
 	if err := windows.CryptUnprotectData(dataBlob(data), nil, nil, 0, nil, cryptprotectUIForbidden, &out); err != nil {

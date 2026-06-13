@@ -1,8 +1,7 @@
 name: release
 
-# Trigger from the Actions tab: "Run workflow" -> enter a version like v4.0.0.
-# The workflow tags the commit and publishes the release itself, so there is no
-# need to create a tag (or release) by hand in the GitHub UI.
+# Trigger from Actions tab: "Run workflow" → enter a version like v4.0.0.
+# The workflow tags the commit and publishes the release; no manual tag needed.
 on:
   workflow_dispatch:
     inputs:

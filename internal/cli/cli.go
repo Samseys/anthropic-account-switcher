@@ -16,36 +16,24 @@ import (
 	"strings"
 )
 
-// CompRequest describes a positional-argument completion query handed to a
-// command's Complete function.
+// CompRequest is a positional-argument completion query handed to Complete.
 type CompRequest struct {
 	Pos  int               // index of the positional being completed (flags skipped)
 	Word string            // the partial word currently under the cursor
 	Has  func(string) bool // whether the named flag (e.g. "--all") is already present
 }
 
-// CompleteFunc returns a command's completion candidates for the positional in
-// r. The framework prefix-filters the candidates by the partial word, so a
-// command may simply return its full set (e.g. every saved profile name). A true
-// second return tells the shell to fall back to its own filename completion, in
-// which case the candidates are ignored.
-//
-// This is the framework's only completion hook: it carries no domain concepts of
-// its own (no notion of "profile" or "file"), so each command owns — and can
-// compute dynamically — exactly what its arguments complete to.
+// CompleteFunc returns completion candidates for a positional. The framework
+// prefix-filters candidates, so returning the full set is fine. A true second
+// return tells the shell to fall back to filename completion (candidates ignored).
 type CompleteFunc func(r CompRequest) (candidates []string, files bool)
 
-// ArgCompleter completes a single positional argument: its candidates, plus
-// whether to fall back to filename completion (the same convention as
-// CompleteFunc's second return).
+// ArgCompleter returns candidates for one positional, plus a filename-fallback flag.
 type ArgCompleter func() (candidates []string, files bool)
 
-// Args builds a CompleteFunc from one ArgCompleter per positional index, so each
-// argument can complete to a different thing — e.g. Args(profiles, files)
-// completes the first argument to profile names and the second to file paths.
-// Positionals beyond the provided list complete to nothing. Commands whose
-// argument meaning depends on a flag (not just its position) should use a
-// CompleteFunc directly instead.
+// Args builds a CompleteFunc from one ArgCompleter per positional index.
+// Positionals beyond the list complete to nothing. Commands whose argument
+// meaning depends on a flag should use a CompleteFunc directly.
 func Args(perPos ...ArgCompleter) CompleteFunc {
 	return func(r CompRequest) ([]string, bool) {
 		if r.Pos >= 0 && r.Pos < len(perPos) {
@@ -55,21 +43,20 @@ func Args(perPos ...ArgCompleter) CompleteFunc {
 	}
 }
 
-// Flag is a boolean (presence-only) flag a command accepts, e.g. --json. The
-// tool has no value-taking flags, which keeps parsing and completion trivial.
+// Flag is a presence-only boolean flag. No value-taking flags exist, which keeps
+// parsing and completion trivial.
 type Flag struct {
 	Name string // including dashes, e.g. "--json"
 	Desc string // shown as the completion description
 }
 
-// Ctx is handed to a command's Run: the parsed positional arguments and the set
-// of flags that were present on the command line.
+// Ctx holds a command's parsed positionals and present flags.
 type Ctx struct {
 	Pos   []string
 	flags map[string]bool
 }
 
-// Arg returns the i-th positional argument, or "" if there are fewer than i+1.
+// Arg returns the i-th positional, or "" if absent.
 func (c Ctx) Arg(i int) string {
 	if i >= 0 && i < len(c.Pos) {
 		return c.Pos[i]
@@ -77,7 +64,7 @@ func (c Ctx) Arg(i int) string {
 	return ""
 }
 
-// Has reports whether the named flag (e.g. "--json") was present.
+// Has reports whether the named flag was present.
 func (c Ctx) Has(flag string) bool { return c.flags[strings.ToLower(flag)] }
 
 // Command is one subcommand. The zero value is not useful; at minimum set Name,
@@ -101,7 +88,6 @@ type Command struct {
 	Run func(Ctx) error
 }
 
-// invocation is the "name [args]" form shown in help.
 func (c *Command) invocation() string {
 	if c.Usage == "" {
 		return c.Name
@@ -124,11 +110,8 @@ type App struct {
 	index   map[string]*Command
 }
 
-// all returns the domain commands followed by the built-ins — the order used by
-// both help and first-word completion.
 func (a *App) all() []*Command { return append(append([]*Command{}, a.cmds...), a.builtin...) }
 
-// completeCmd is the hidden command the shell snippets invoke for candidates.
 const completeCmd = "__complete"
 
 // New returns an App pre-populated with the built-in help, version, completion
@@ -171,8 +154,7 @@ func New(name string) *App {
 	return a
 }
 
-// Add registers domain commands (and indexes their names and aliases). A later
-// command may intentionally override an earlier registration of the same name.
+// Add registers commands. A later registration intentionally overrides an earlier one.
 func (a *App) Add(cmds ...*Command) *App {
 	for _, c := range cmds {
 		a.cmds = append(a.cmds, c)
@@ -181,7 +163,6 @@ func (a *App) Add(cmds ...*Command) *App {
 	return a
 }
 
-// indexCmd maps a command's name and aliases to it for lookup.
 func (a *App) indexCmd(c *Command) {
 	a.index[strings.ToLower(c.Name)] = c
 	for _, al := range c.Aliases {
@@ -189,12 +170,9 @@ func (a *App) indexCmd(c *Command) {
 	}
 }
 
-// lookup resolves a command by name or alias, case-insensitively.
 func (a *App) lookup(name string) *Command { return a.index[strings.ToLower(name)] }
 
-// parse splits the words after the command name into positionals and the set of
-// present flags. A token longer than one character and starting with '-' is a
-// flag; everything else (including a lone "-") is positional.
+// parse splits args into positionals and flags. A lone "-" is positional.
 func parse(args []string) Ctx {
 	ctx := Ctx{flags: map[string]bool{}}
 	for _, a := range args {
@@ -207,8 +185,7 @@ func parse(args []string) Ctx {
 	return ctx
 }
 
-// Run dispatches the raw argument list (os.Args[1:]). It returns the handler's
-// error for the caller to report; unknown commands print help and exit 1.
+// Run dispatches os.Args[1:]; unknown commands print help and exit 1.
 func (a *App) Run(args []string) error {
 	name := ""
 	var rest []string
@@ -216,8 +193,7 @@ func (a *App) Run(args []string) error {
 		name, rest = args[0], args[1:]
 	}
 
-	// The completion callback needs the raw words (flags inline, plus the
-	// --cur marker), so it bypasses the positional/flag split below.
+	// Completion needs raw words (flags inline + --cur marker), bypassing parse.
 	if strings.EqualFold(name, completeCmd) {
 		a.reply(rest)
 		return nil
@@ -240,14 +216,12 @@ func (a *App) Run(args []string) error {
 	return nil
 }
 
-// help layout: the command invocation occupies a fixed field; summaries start
-// two columns past it, and continuation lines align to the same column.
 const (
 	helpField  = 18
 	helpIndent = helpField + 4 // 2 leading spaces + field + 2 gap
 )
 
-// Help prints the usage screen, generated entirely from the registry.
+// Help prints the usage screen.
 func (a *App) Help() {
 	fmt.Printf("%s v%s - %s\n\n", a.Name, a.Version, a.Tagline)
 	fmt.Printf("Usage: %s <command> [args...]\n\n", a.Name)
@@ -277,9 +251,7 @@ func (a *App) Help() {
 	fmt.Printf("\nRun '%s help <command>' for details on a single command.\n", a.Name)
 }
 
-// HelpCommand prints detailed help for a single command — its usage, full
-// (possibly multi-line) summary, any aliases and any flags — or returns an error
-// if no such command is registered. It backs `<bin> help <command>`.
+// HelpCommand prints detailed help for one command, or errors if not found.
 func (a *App) HelpCommand(name string) error {
 	cmd := a.lookup(name)
 	if cmd == nil {
@@ -291,8 +263,7 @@ func (a *App) HelpCommand(name string) error {
 	} else if cmd.Summary != "" {
 		fmt.Printf("\n%s\n", cmd.Summary)
 	}
-	// Skip the empty-string and dash aliases the built-ins use internally; only
-	// real alternative spellings are worth showing.
+	// Skip empty-string and dash aliases used internally by built-ins.
 	var aliases []string
 	for _, al := range cmd.Aliases {
 		if al != "" && !strings.HasPrefix(al, "-") {
@@ -311,8 +282,7 @@ func (a *App) HelpCommand(name string) error {
 	return nil
 }
 
-// commandNames is the ArgCompleter behind `help <command>`: every command a user
-// can ask for help on, i.e. the visible (non-Hidden) commands and built-ins.
+// commandNames is the ArgCompleter for `help <command>`.
 func (a *App) commandNames() ([]string, bool) {
 	var out []string
 	for _, c := range a.all() {

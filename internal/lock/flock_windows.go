@@ -8,7 +8,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// flockTry attempts a non-blocking exclusive LockFileEx on the first byte of f.
+// flockTry acquires a non-blocking exclusive LockFileEx on the first byte.
+// LockFileEx requires an explicit byte range; one byte suffices as a mutex.
 func flockTry(f *os.File) error {
 	err := windows.LockFileEx(windows.Handle(f.Fd()),
 		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,

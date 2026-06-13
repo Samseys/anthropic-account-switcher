@@ -2,7 +2,6 @@ package update
 
 import "github.com/Samseys/anthropic-account-switcher/internal/cli"
 
-// Commands returns the update/upgrade/self-update subcommand.
 func Commands() []*cli.Command {
 	return []*cli.Command{
 		{

@@ -1,11 +1,7 @@
 // Command acc-claude switches between multiple Anthropic (Claude Code) accounts
-// by snapshotting OAuth credentials and the cached identity into named profiles.
-// Single static binary; macOS shells out to the `security` CLI for Keychain,
+// by snapshotting OAuth credentials and cached identity into named profiles.
+// Single static binary; macOS shells out to `security` for Keychain access,
 // Windows edits the user PATH in the registry during `register`.
-//
-// This file is the front end only: it assembles the command table from each
-// package's own Commands() and hands it to internal/cli. The work lives in the
-// internal/ packages: profile, store, install, update, and paths.
 package main
 
 import (
@@ -24,7 +20,7 @@ func main() {
 	}
 }
 
-// buildApp constructs the command registry, extracted from main so tests can exercise it.
+// buildApp is extracted from main so tests can exercise the command registry.
 func buildApp() *cli.App {
 	app := cli.New(paths.Bin)
 	app.Version = paths.VersionString()
@@ -33,7 +29,7 @@ func buildApp() *cli.App {
 		"Claude Code picks up the switch on its next request; no restart needed.",
 		"Switching re-saves the account you are leaving, so its tokens stay fresh.",
 	}
-	// Nudge about a new version at most once a day; skip for machine-readable output.
+	// Passive version nudge, at most once a day; skip for machine-readable output.
 	app.After = func(_ *cli.Command, ctx cli.Ctx) {
 		if !ctx.Has("--json") {
 			update.MaybeNotify()

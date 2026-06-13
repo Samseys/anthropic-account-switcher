@@ -40,13 +40,12 @@ func installedBinaryPath() string {
 }
 
 // InstallDir and InstalledBinaryPath expose the managed install location so the
-// build tool (scripts/build install) places the local build exactly where
-// register expects it — one source of truth, no drift.
+// build tool (scripts/build install) places the binary exactly where register
+// expects it — one source of truth.
 func InstallDir() string          { return installDir() }
 func InstalledBinaryPath() string { return installedBinaryPath() }
 
 // Register puts the per-user bin directory on PATH and installs shell completion.
-// Does not copy or rewrite any executable — the installer script does that.
 func Register() error {
 	dir := installDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -76,8 +75,7 @@ func Register() error {
 		fmt.Print(msg)
 	}
 
-	// The usage status line is likewise best-effort: a malformed settings.json or
-	// a user's own status line must not fail register.
+	// Best-effort: a malformed settings.json or a user's own status line must not fail register.
 	if msg, err := InstallStatusLine(); err != nil {
 		fmt.Printf("Note: skipped the usage status line (%v).\n", err)
 	} else {
@@ -126,9 +124,8 @@ func Unregister(purge bool) error {
 	}
 	fmt.Println("(Your active Claude Code login is not touched - this only removes the tool.)")
 	if purge {
-		// Acquire then immediately release: holding the lock while calling
-		// RemoveAll would keep an open handle inside the directory, blocking
-		// removal on Windows. Best-effort: proceed even if the lock fails.
+		// Acquire then immediately release: holding the lock during RemoveAll
+		// would keep an open handle inside the dir, blocking removal on Windows.
 		if release, err := lock.Acquire(); err == nil {
 			release()
 		}
@@ -148,9 +145,8 @@ func Unregister(purge bool) error {
 	return nil
 }
 
-// removeInstallDir removes the install folder only on Windows (the dedicated
-// per-tool dir). On Unix ~/.local/bin is shared and must not be removed.
-// os.Remove silently skips non-empty directories.
+// removeInstallDir removes the install folder only on Windows (dedicated per-tool
+// dir). On Unix ~/.local/bin is shared and must not be removed.
 func removeInstallDir(dir string) {
 	if runtime.GOOS != "windows" || filepath.Base(dir) != paths.Bin {
 		return

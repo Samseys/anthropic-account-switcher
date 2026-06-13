@@ -7,9 +7,7 @@ import (
 	"strings"
 )
 
-// The completion engine. Everything here is derived from the registered
-// commands, so it stays in lockstep with dispatch and help. The two directive
-// tokens tell the shell what to do when our own candidates do not apply.
+// Directive tokens tell the shell what to do when our candidates do not apply.
 const (
 	dirNoFile  = ":nofile"  // do not fall back to filename completion
 	dirDefault = ":default" // let the shell do its default (file) completion
@@ -23,10 +21,8 @@ const (
 // identical across bash, zsh, fish and PowerShell.
 const curMarker = "--cur="
 
-// parseRequest converts the raw words a shell passed into the form complete
-// expects: the already-completed words followed by the partial word under the
-// cursor. Shells send the partial word last, wrapped as "--cur=<partial>"; if
-// the marker is absent the input is used as-is (handy for hand-typed debugging).
+// parseRequest unwraps the "--cur=<partial>" marker from the last word.
+// If absent, args is used as-is (handy for debugging).
 func parseRequest(args []string) []string {
 	if n := len(args); n > 0 && strings.HasPrefix(args[n-1], curMarker) {
 		partial := strings.TrimPrefix(args[n-1], curMarker)
@@ -35,10 +31,8 @@ func parseRequest(args []string) []string {
 	return args
 }
 
-// complete computes the candidate completions for words, whose final element is
-// the (possibly empty) partial word under the cursor and whose earlier elements
-// are the already-typed words after the binary name. A candidate may be
-// "name\tdescription"; the second return is the fallback directive.
+// complete returns candidates for words (last = partial word). Candidates may
+// be "name\tdescription"; the second return is the fallback directive.
 func (a *App) complete(words []string) ([]string, string) {
 	if len(words) == 0 {
 		words = []string{""}
@@ -46,8 +40,7 @@ func (a *App) complete(words []string) ([]string, string) {
 	toComplete := words[len(words)-1]
 	typed := words[:len(words)-1]
 
-	// First word: complete the subcommand name.
-	if len(typed) == 0 {
+	if len(typed) == 0 { // first word: complete the subcommand name
 		var out []string
 		for _, c := range a.all() {
 			if c.Hidden {
@@ -65,8 +58,7 @@ func (a *App) complete(words []string) ([]string, string) {
 		return nil, dirNoFile
 	}
 
-	// A '-'-prefixed partial word completes one of this command's flags.
-	if strings.HasPrefix(toComplete, "-") {
+	if strings.HasPrefix(toComplete, "-") { // partial flag
 		var out []string
 		for _, f := range cmd.Flags {
 			if strings.HasPrefix(f.Name, toComplete) {
@@ -76,8 +68,7 @@ func (a *App) complete(words []string) ([]string, string) {
 		return out, dirNoFile
 	}
 
-	// Index of the positional now being typed: count earlier positionals,
-	// skipping flags, and remember which flags are present.
+	// Count earlier positionals (skipping flags) to find the current index.
 	pos := 0
 	has := map[string]bool{}
 	for _, w := range typed[1:] {
@@ -102,8 +93,7 @@ func (a *App) complete(words []string) ([]string, string) {
 	return prefixFilter(candidates, toComplete), dirNoFile
 }
 
-// reply prints the candidates for the shell-supplied words (last = the wrapped
-// partial word) followed by the directive line. It is the body of __complete.
+// reply prints candidates then the directive; it is the body of __complete.
 func (a *App) reply(words []string) {
 	cands, directive := a.complete(parseRequest(words))
 	for _, c := range cands {
@@ -112,7 +102,6 @@ func (a *App) reply(words []string) {
 	fmt.Println(directive)
 }
 
-// prefixFilter returns the sorted members of values that start with prefix.
 func prefixFilter(values []string, prefix string) []string {
 	var out []string
 	for _, v := range values {
@@ -124,14 +113,12 @@ func prefixFilter(values []string, prefix string) []string {
 	return out
 }
 
-// firstLine returns s up to its first newline (summaries may be multi-line).
 func firstLine(s string) string {
 	line, _, _ := strings.Cut(s, "\n")
 	return line
 }
 
-// completionScript prints the completion snippet for the requested shell, or a
-// short usage/instruction block (and exits 1) when no shell is given.
+// completionScript prints the snippet for shell, or usage and exits 1 if empty.
 func (a *App) completionScript(shell string) error {
 	if shell == "" {
 		b := a.Name
@@ -162,7 +149,6 @@ func CompletionScript(binName, shell string) (string, error) {
 	return (&App{Name: binName}).shellScript(shell)
 }
 
-// shellScript returns the completion snippet for the named shell.
 func (a *App) shellScript(shell string) (string, error) {
 	b := a.Name
 	switch strings.ToLower(shell) {
@@ -179,11 +165,9 @@ func (a *App) shellScript(shell string) (string, error) {
 	}
 }
 
-// In every script below, %[1]s etc. are the binary name. Each snippet collects
-// the already-completed words after the binary, passes the word under the cursor
-// as a trailing "--cur=<partial>" argument (see curMarker), calls
-// `<bin> __complete ...`, strips the trailing directive line, and feeds the rest
-// to the shell — falling back to filename completion on ":default".
+// %[1]s etc. are the binary name. Each snippet passes "--cur=<partial>" as the
+// last arg (see curMarker), calls __complete, strips the trailing directive, and
+// falls back to filename completion on ":default".
 
 const bashScript = `# bash completion for %[1]s
 _%[2]s_complete() {

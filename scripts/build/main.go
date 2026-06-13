@@ -229,11 +229,9 @@ func build() error {
 	return buildTarget(runtime.GOOS, runtime.GOARCH, out)
 }
 
-// install compiles the current source and installs that build the same way
-// install.ps1/install.sh install a downloaded release: it copies the binary into
-// the managed per-user location and runs `register` (PATH + completion + status
-// line), so the tool is immediately usable. Placement is the build tool's job —
-// the binary still never copies itself.
+// install compiles and installs like install.ps1/install.sh: copies the binary
+// into the managed per-user location and runs `register` (PATH + completion +
+// status line). Placement is the build tool's job — the binary never copies itself.
 func install() error {
 	if err := build(); err != nil {
 		return err

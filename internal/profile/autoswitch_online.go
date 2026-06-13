@@ -23,18 +23,16 @@ import (
 // headroom we must poll them live. See internal/usage/endpoint.go.
 
 const (
-	// endpointPollInterval is the floor between active-account endpoint polls in
-	// the watch loop; the endpoint rate-limits hard, so we poll no faster.
+	// endpointPollInterval is the floor between endpoint polls in the watch loop.
 	endpointPollInterval = usage.MinInterval
 	// tokenRefreshSkew refreshes a candidate's access token this far before its
 	// stated expiry, so a poll never races the expiry boundary.
 	tokenRefreshSkew = 60 * time.Second
 )
 
-// fetchActiveOnline reads the live account's usage from the endpoint. It never
-// refreshes or rewrites the live credentials — Claude Code owns that token and
-// keeps it fresh while it is running — so on an unauthorized response it simply
-// returns the error and the caller skips this cycle.
+// fetchActiveOnline reads the live account's usage from the endpoint. Never
+// refreshes or rewrites live credentials — Claude Code owns that token — so on
+// 401/403 it returns the error and the caller skips this cycle.
 func fetchActiveOnline(ctx context.Context) (*usage.Report, error) {
 	raw, err := store.ReadCreds()
 	if err != nil {
@@ -47,11 +45,9 @@ func fetchActiveOnline(ctx context.Context) (*usage.Report, error) {
 	return usage.Fetch(ctx, creds.AccessToken)
 }
 
-// fetchProfileOnline reads a saved profile's current usage from the endpoint,
-// refreshing and persisting its access token first when it is near expiry (or
-// retrying once on an unauthorized response). Candidate-profile tokens are safe
-// to refresh and write back — unlike the live credentials — because Claude Code
-// is not the one holding them.
+// fetchProfileOnline reads a saved profile's usage from the endpoint, refreshing
+// and persisting its token when near expiry (or retrying once on 401). Candidate
+// tokens are safe to refresh and write back — Claude Code is not holding them.
 func fetchProfileOnline(ctx context.Context, name string) (*usage.Report, error) {
 	dir := profilePath(name)
 	raw, err := readProfileCreds(dir)
@@ -78,10 +74,9 @@ func fetchProfileOnline(ctx context.Context, name string) (*usage.Report, error)
 	return rep, err
 }
 
-// refreshProfile exchanges a profile's refresh token for a fresh access token and
-// persists it back into the profile's encrypted credential snapshot. Persisting
-// is best-effort: if the write fails we still return the in-memory token so the
-// poll can proceed (the next refresh will try to persist again).
+// refreshProfile exchanges a profile's refresh token for a new access token and
+// persists it to the encrypted snapshot (best-effort: write failures are warned
+// but the in-memory token is still returned so the poll can proceed).
 func refreshProfile(ctx context.Context, dir string, raw []byte, creds usage.Credentials) ([]byte, usage.Credentials, error) {
 	if creds.RefreshToken == "" {
 		return raw, creds, fmt.Errorf("no refresh token saved for this profile; log in to it again")
@@ -97,10 +92,9 @@ func refreshProfile(ctx context.Context, dir string, raw []byte, creds usage.Cre
 	return merged, usage.Credentials{AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken, ExpiresAt: tok.ExpiresAt}, nil
 }
 
-// persistProfileToken writes a refreshed token back into the profile's credential
-// snapshot, preserving every other field and re-encrypting at rest. It returns
-// the merged plaintext creds even when the write fails, so the caller can keep
-// using the fresh token in memory.
+// persistProfileToken writes a refreshed token into the profile's encrypted
+// credential snapshot, preserving all other fields. Returns the merged plaintext
+// creds even on write failure so the caller can use the fresh token in memory.
 func persistProfileToken(dir string, oldCreds []byte, tok usage.Token) ([]byte, error) {
 	merged, err := usage.WithCredentialTokens(oldCreds, tok)
 	if err != nil {
@@ -116,16 +110,13 @@ func persistProfileToken(dir string, oldCreds []byte, tok usage.Token) ([]byte, 
 	return merged, nil
 }
 
-// refreshUsageOnline replaces the *inactive* profiles' cached usage with a live
-// endpoint reading. With force (`list --refresh`) it polls every inactive profile;
-// otherwise it refreshes one only when its data is no longer trustworthy — its
-// access token has expired, or its usage reading is missing or older than
-// cacheStaleAfter — so a plain `list` shows current numbers (and quietly renews a
-// lapsed token) without polling on every invocation. Inactive accounts refresh and
-// persist their own token as needed, and the renewed expiry is reflected back into
-// the row. The active account is handled separately by refreshActiveUsageIfStale
-// (read-only; Claude Code owns its live token). Each fresh reading is also written
-// to the profile's cache. Failures warn and leave the cached reading in place.
+// refreshUsageOnline replaces inactive profiles' cached usage with a live endpoint
+// reading. With force (`list --refresh`) every inactive profile is polled;
+// otherwise only profiles whose token has expired or whose reading is missing or
+// older than cacheStaleAfter are refreshed — so a plain `list` shows current
+// numbers without polling every time. Renewed expiries are reflected back into the
+// row. The active account is handled by refreshActiveUsageIfStale (read-only;
+// Claude Code owns its live token). Failures warn and leave the cache in place.
 func refreshUsageOnline(infos []profileInfo, force bool) {
 	ctx := context.Background()
 	for i := range infos {
@@ -151,12 +142,9 @@ func refreshUsageOnline(infos []profileInfo, force bool) {
 	}
 }
 
-// shouldPollActive decides whether to poll the active account's usage online now.
-// The sensor keeps the reading warm in the terminal, but not in the VSCode panel,
-// so the read paths fall back to the endpoint when the local reading is older than
-// activeStaleAfter — while Claude Code is running (it owns and keeps the live token
-// fresh) and no faster than usage.MinInterval. force (`list --refresh`) bypasses
-// all three gates.
+// shouldPollActive reports whether to poll the active account's endpoint now.
+// Returns true when force is set, or when the local reading is stale AND Claude
+// Code is running AND no poll happened within MinInterval.
 func shouldPollActive(lastRecorded time.Time, haveReading, force bool) bool {
 	if force {
 		return true
@@ -167,12 +155,10 @@ func shouldPollActive(lastRecorded time.Time, haveReading, force bool) bool {
 	return proc.ClaudeRunning() && !recentActivePoll()
 }
 
-// refreshActiveUsageIfStale polls the active account's usage from the endpoint and
-// records it (to the global state file and the active profile's cache) when the
-// local reading has gone stale. It is the VSCode-panel counterpart to the sensor:
-// read-only against the live credentials (never refreshes or rewrites them) and
-// best-effort — on any failure it leaves the cached reading untouched and stays
-// silent, since this runs behind `usage`/`list` that the panel polls on a timer.
+// refreshActiveUsageIfStale polls the active account's usage and records it when
+// the local reading is stale. VSCode-panel counterpart to the sensor: read-only
+// against live credentials and best-effort (silent on failure, since `usage`/`list`
+// poll this on a timer).
 func refreshActiveUsageIfStale(force bool) {
 	active := activeProfile()
 	if active == "" {
@@ -190,10 +176,9 @@ func refreshActiveUsageIfStale(force bool) {
 	recordUsage(usageSnapshot{Account: active, FiveHour: rep.FiveHour, SevenDay: rep.SevenDay, UpdatedAt: time.Now()})
 }
 
-// evaluateOnline polls the active account's usage from the endpoint, records it
-// (so `usage`/`list`/the panel reflect it too), and switches if it trips the
-// threshold. It is the fallback used when the status-line sensor has no fresh
-// reading — chiefly the VSCode panel, which never runs status-line commands.
+// evaluateOnline polls the active account's usage, records it, and switches if it
+// trips the threshold. Fallback for when the sensor has no fresh reading (e.g.
+// the VSCode panel, which never runs status-line commands).
 func evaluateOnline(ctx context.Context, opts AutoSwitchOptions) {
 	active := activeProfile()
 	if active == "" {
@@ -215,13 +200,11 @@ func evaluateOnline(ctx context.Context, opts AutoSwitchOptions) {
 	tripAndSwitch(ctx, opts, active, five, seven)
 }
 
-// chooseTargetOnline ranks switch candidates by their *current* endpoint usage:
-// every saved account other than active is polled live (refreshing its token as
-// needed), and the recorded reading also updates that profile's cache so `usage`
-// and the panel reflect it. A candidate whose live 5-hour usage is below the
-// threshold wins (lowest first). When a candidate cannot be polled (network
-// error, rejected refresh) it falls back to its last cached reading, and failing
-// that is treated as unknown — a last resort that refreshes on the switch itself.
+// chooseTargetOnline ranks candidates by current endpoint usage, polling each
+// inactive account live (refreshing its token as needed) and updating its cache.
+// The lowest 5-hour usage below threshold wins. A failed poll falls back to the
+// last cached reading; still-unavailable candidates are treated as unknown (last
+// resort, refreshed on the switch itself).
 func chooseTargetOnline(ctx context.Context, active string, threshold float64) (name, reason string, err error) {
 	var below, unknown []candidate
 	for _, n := range profileNames() {

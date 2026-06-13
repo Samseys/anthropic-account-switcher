@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
 
-# A newer push to main supersedes an in-flight run (incl. its nightly publish).
+# A newer push to main supersedes an in-flight run, including its nightly publish.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -37,10 +37,9 @@ jobs:
       - name: Test
         run: go test ./...
 
-      # The OS-specific build tags mean a single-platform build doesn't prove the
-      # others compile. On PRs we have no nightly job, so check every target here.
-      # On a push to main the nightly job's `make dist` is the cross-compile proof,
-      # so this redundant check is skipped.
+      # OS-specific build tags mean a single-platform build doesn't prove the others
+      # compile. On PRs there's no nightly job, so check every target here; on main,
+      # `make dist` in the nightly job serves as the cross-compile proof.
       - name: Cross-compile check
         if: runner.os == 'Linux' && github.event_name == 'pull_request'
         env:
@@ -50,14 +49,12 @@ jobs:
             GOOS="${t%/*}" GOARCH="${t#*/}" go build -o /dev/null ./cmd/acc-claude
           done
 
-  # Pre-release built from main on every push, gated on `test`. It is
-  # intentionally a *prerelease*: GitHub's releases/latest (used by
-  # `acc-claude update` and the installers' stable path) skips prereleases, so a
-  # nightly never reaches stable users. Each build is published under its own
-  # unique version tag so GitHub lists the newest at the top of the releases page
-  # (a reused tag name keeps its original, stale sort slot and gets buried); we
-  # then delete every older nightly, so only one is ever live and we don't
-  # accumulate many distinct unsigned binaries. The installers' --nightly path
+  # Prerelease built from main on every push, gated on `test`. Intentionally a
+  # prerelease: GitHub's releases/latest (used by `acc-claude update` and the
+  # installers' stable path) skips prereleases, so nightlies never reach stable
+  # users. Each build gets a unique version tag so GitHub sorts it to the top of
+  # the releases page (a reused tag keeps its original, stale sort slot). Older
+  # nightlies are deleted so only one is ever live. The installers' --nightly path
   # resolves the current nightly's assets from the Releases API.
   nightly:
     needs: test
@@ -78,17 +75,14 @@ jobs:
       - name: Derive version
         id: ver
         run: |
-          # A nightly from main is *newer* than the latest release, but semver
-          # orders X.Y.Z-nightly.* below X.Y.Z. So version it as a prerelease
-          # of the *next* patch (X.Y.(Z+1)-nightly.*): it then sorts above the
-          # current release and below the next one, keeping `acc-claude
-          # update`'s comparison honest for nightly users.
+          # Semver orders X.Y.Z-nightly.* below X.Y.Z, so version as a prerelease
+          # of the *next* patch (X.Y.(Z+1)-nightly.*): sorts above the current
+          # release and below the next, keeping `acc-claude update` honest.
           #
-          # --match/--exclude restrict describe to stable release tags. Our
-          # nightly tags are version-prefixed (vX.Y.Z-nightly.*) and would
-          # otherwise be the nearest match, drifting the patch up every run. The
-          # g-prefix on the sha keeps that identifier alphanumeric (an all-digit
-          # sha with a leading zero is not valid semver).
+          # --match/--exclude restrict describe to stable release tags; nightly
+          # tags are version-prefixed and would otherwise be the nearest match,
+          # drifting the patch up every run. The g-prefix keeps the sha segment
+          # alphanumeric (an all-digit sha with a leading zero is not valid semver).
           base="$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-nightly.*' 2>/dev/null || echo v0.0.0)"
           next="$(echo "${base#v}" | awk -F. '{printf "v%d.%d.%d", $1, $2, $3+1}')"
           echo "version=${next}-nightly.$(date -u +%Y%m%d%H%M%S).g${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
@@ -101,9 +95,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          # Publish under this build's unique version tag so GitHub sorts it to
-          # the top of the releases page (a freshly created tag name is ranked by
-          # its commit date; a reused name keeps its original, stale slot).
           gh release create "$VERSION" dist/* \
             --prerelease \
             --target "$GITHUB_SHA" \
@@ -112,10 +103,8 @@ jobs:
 
           This is a **pre-release**. The installers' default path and \`acc-claude update\` track stable releases only, so they will not pick this up. Install with \`--nightly\` (or \`ACC_CLAUDE_NIGHTLY=1\`), or download an asset below, to try the latest main."
 
-          # Prune every other nightly (this build excepted) so only one is live.
-          # Covers older version-tagged nightlies and the legacy "nightly" tag
-          # from the previous rolling scheme. The current build is excluded inside
-          # jq (via env.VERSION) so the pipeline can't fail on an empty match
+          # Prune all other nightlies so only one is live. The current build is
+          # excluded inside jq (via env.VERSION) to avoid an empty-match failure
           # under `set -eo pipefail`; per-delete failures are swallowed.
           gh release list --limit 100 --json tagName,isPrerelease \
             --jq '.[] | select(.isPrerelease and (.tagName | test("nightly")) and .tagName != env.VERSION) | .tagName' \

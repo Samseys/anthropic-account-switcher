@@ -24,8 +24,7 @@ func lockPath() string {
 	return filepath.Join(paths.ProfileDir, lockName)
 }
 
-// Acquire takes the profile-directory lock and returns a release function.
-// Retries for retryFor on contention, then fails.
+// Acquire takes the profile-directory lock, retrying for retryFor on contention.
 func Acquire() (func(), error) {
 	if err := os.MkdirAll(paths.ProfileDir, 0o755); err != nil {
 		return nil, err
@@ -60,5 +59,4 @@ func Acquire() (func(), error) {
 	}
 }
 
-// errContended is the only error Acquire retries on.
 var errContended = fmt.Errorf("lock is held")

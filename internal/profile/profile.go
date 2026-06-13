@@ -51,28 +51,24 @@ func resolveProfile(name string) (string, string, error) {
 	return name, profilePath(name), nil
 }
 
-// profileUserID returns the raw userID from the profile (quotes included), or "".
+// profileUserID returns the raw userID value (quotes included) from the profile.
 // This is a machine-wide analytics ID; identity matching uses profileAccountID instead.
 func profileUserID(dir string) string {
 	return paths.ReadTrim(filepath.Join(dir, fileUserID))
 }
 
-// profileAccountID returns the accountUuid from the profile's saved oauthAccount, or "".
 func profileAccountID(dir string) string {
 	return claudejson.Field(profileOAuth(dir), "accountUuid")
 }
 
-// profileOAuth returns the raw oauthAccount value from the profile, or "".
 func profileOAuth(dir string) string {
 	return paths.ReadTrim(filepath.Join(dir, fileOAuth))
 }
 
-// profileEmail returns the account email recorded in the profile at dir, or "".
 func profileEmail(dir string) string {
 	return paths.ReadTrim(filepath.Join(dir, fileEmail))
 }
 
-// emailOrUnknown returns email, or "unknown" when it is empty.
 func emailOrUnknown(email string) string {
 	if email == "" {
 		return "unknown"
@@ -80,7 +76,7 @@ func emailOrUnknown(email string) string {
 	return email
 }
 
-// Names returns the names of all saved profiles, sorted (used by shell completion).
+// Names returns saved profile names, sorted. Used by shell completion.
 func Names() []string { return profileNames() }
 
 func profileNames() []string {
@@ -100,7 +96,6 @@ func profileNames() []string {
 	return names
 }
 
-// profileForAccount returns the name of the saved profile for accountID, or "".
 func profileForAccount(accountID string) string {
 	for _, name := range profileNames() {
 		if profileAccountID(profilePath(name)) == accountID {
@@ -225,7 +220,6 @@ func readLiveIdentity() liveIdentity {
 	return id
 }
 
-// liveAccountID returns oauthAccount.accountUuid from ~/.claude.json, or "".
 func liveAccountID() string {
 	return readLiveIdentity().accountID
 }
@@ -264,8 +258,7 @@ func snapshot(name string, quiet bool) (string, error) {
 	id := readLiveIdentity()
 	oauthText, userIDText, email := id.oauth, id.userID, id.email
 
-	// existing is the profile (if any) already tracking this account by accountUuid.
-	// It pins the name to prevent one account ending up under two profiles.
+	// existing pins the name: one account must not end up under two profiles.
 	existing := activeProfile()
 
 	if name == "" {
@@ -284,7 +277,7 @@ func snapshot(name string, quiet bool) (string, error) {
 		return "", fmt.Errorf("this account is already saved as profile %q; use '%s save' (no name) to update it, or '%s rename %s %s' to rename it",
 			existing, paths.Bin, paths.Bin, existing, name)
 	}
-	// A different account is already saved under this name; don't clobber it.
+	// A different account is saved under this name; don't clobber it.
 	if existing != name && profileExists(name) {
 		return "", fmt.Errorf("a profile named %q already exists for a different account; remove it first or pick another name", name)
 	}
@@ -321,7 +314,7 @@ func snapshot(name string, quiet bool) (string, error) {
 	return name, nil
 }
 
-// Save stores the current account as a named profile (defaulting to its email).
+// Save snapshots the current account as a named profile (defaults to the account email).
 func Save(name string) error {
 	release, err := lock.Acquire()
 	if err != nil {
@@ -334,7 +327,7 @@ func Save(name string) error {
 
 var expiresAtRe = regexp.MustCompile(`"expiresAt"\s*:\s*(\d+)`)
 
-// currentInfo is the --json payload for `current`. saved is not omitempty:
+// currentInfo is the --json payload for `current`. Saved is not omitempty:
 // consumers rely on it being present to distinguish tracked vs. unsaved accounts.
 type currentInfo struct {
 	LoggedIn     bool   `json:"loggedIn"`
@@ -356,11 +349,9 @@ type profileInfo struct {
 	UsageRecordedAt *time.Time    `json:"usageRecordedAt,omitempty"`
 }
 
-// liveTokenExpiry reads the active account's OAuth access-token expiry from the
-// *live* credentials, or nil when unreadable/absent. The active account's
-// snapshot is stale (Claude Code rotates the live token in place without
-// re-saving the profile), so the live credentials are the only trustworthy
-// source of its real expiry.
+// liveTokenExpiry reads the active account's token expiry from the *live* credentials.
+// The profile snapshot is stale (Claude Code rotates tokens in place without re-saving),
+// so the live credentials are the only trustworthy source.
 func liveTokenExpiry() *time.Time {
 	raw, ok := store.TryReadCreds()
 	if !ok {
@@ -374,8 +365,6 @@ func liveTokenExpiry() *time.Time {
 	return &t
 }
 
-// profileTokenExpiry reads a profile's OAuth access-token expiry from its
-// snapshot, or nil when absent/unreadable.
 func profileTokenExpiry(dir string) *time.Time {
 	creds, err := readProfileCreds(dir)
 	if err != nil {
@@ -409,8 +398,7 @@ func gatherProfiles() []profileInfo {
 		}
 		p.TokenExpiresAt = profileTokenExpiry(dir)
 		if p.Active {
-			// The active account's snapshot expiry is stale — Claude Code rotates
-			// the live token in place — so read the real expiry from live creds.
+			// Snapshot expiry is stale for the active account; prefer live creds.
 			if exp := liveTokenExpiry(); exp != nil {
 				p.TokenExpiresAt = exp
 			}
@@ -424,13 +412,12 @@ func gatherProfiles() []profileInfo {
 	return infos
 }
 
-// List prints the saved profiles (or a JSON array when asJSON is set). Profiles
-// with stale or expired data are refreshed from the endpoint automatically;
-// refresh forces a live usage poll of every account.
+// List prints the saved profiles (or a JSON array when asJSON is set).
+// Stale or token-expired profiles are refreshed from the endpoint automatically;
+// refresh forces a live poll of every account.
 func List(asJSON, refresh bool) error {
-	// Refresh the active account online first (when its sensor reading is stale),
-	// so the row gatherProfiles reads below is current; then refresh stale/expired
-	// candidates. --refresh forces a live poll of every account.
+	// Refresh active account first so gatherProfiles sees current data, then
+	// refresh stale/expired candidates.
 	refreshActiveUsageIfStale(refresh)
 	infos := gatherProfiles()
 	refreshUsageOnline(infos, refresh)
@@ -469,8 +456,7 @@ func List(asJSON, refresh bool) error {
 		}
 		email := emailOrUnknown(p.Email)
 		line := fmt.Sprintf("  %s%-*s  %-*s", mark, maxName, p.Name, maxEmail, email)
-		// Reserve a fixed-width usage column when any profile has a reading, so the
-		// trailing "saved"/"[token expired]" stay aligned across rows.
+		// Fixed-width usage column keeps the trailing fields aligned across rows.
 		if anyUsage {
 			if p.FiveHour != nil || p.SevenDay != nil {
 				line += "  " + usageBrief(p.FiveHour, p.SevenDay, on)
@@ -547,8 +533,8 @@ func Switch(name string) error {
 		return nil
 	}
 
-	// Re-save the leaving account before overwriting: Claude Code rotates tokens
-	// in place, so its snapshot would otherwise go stale.
+	// Re-save the leaving account: Claude Code rotates tokens in place, so its
+	// snapshot would otherwise go stale.
 	resnapped := false
 	if active != "" {
 		if _, err := snapshot(active, true); err == nil {
@@ -559,8 +545,8 @@ func Switch(name string) error {
 	// Detection is heuristic; we only warn, never block.
 	claudeRunning := proc.ClaudeRunning()
 
-	// Compute the patched config before swapping credentials so any error surfaces
-	// while the live state is still consistent.
+	// Compute the patched config before swapping credentials so errors surface
+	// while live state is still consistent.
 	newCfg, patchCfg := "", false
 	if cfg, ok := paths.ReadFileOpt(paths.ConfigFile); ok {
 		if o := profileOAuth(dir); o != "" {
@@ -572,18 +558,15 @@ func Switch(name string) error {
 		newCfg, patchCfg = cfg, true
 	}
 
-	// Snapshot live creds so a later failure can roll back the swap.
+	// Snapshot live creds for rollback.
 	prevLive, hadLive := store.TryReadCreds()
 	if err := store.WriteCreds(creds); err != nil {
 		return err
 	}
 
-	// Read back the credentials to confirm the write stuck — an AV scanner can
-	// revert the rename, a Keychain write can fail to take. On mismatch, roll the
-	// swap back rather than report a success that didn't happen. Compares the raw
-	// blob, not liveAccountID (that reads the not-yet-patched config). The config
-	// patch below is intentionally excluded — it's cached display identity that
-	// Claude Code refreshes from the token.
+	// Verify the write stuck: AV scanners can revert a rename and Keychain writes
+	// can silently fail. Compares the raw blob (not liveAccountID, which reads
+	// the not-yet-patched config) and rolls back on mismatch.
 	got, ok := store.TryReadCreds()
 	if !ok || strings.TrimSpace(string(got)) != strings.TrimSpace(string(creds)) {
 		if hadLive {
@@ -592,8 +575,7 @@ func Switch(name string) error {
 		return fmt.Errorf("switch failed: credentials did not take, rolled back to the previous account")
 	}
 
-	// Config patch is best-effort: Claude Code refreshes oauthAccount/userID from
-	// the token, so a failure here only warrants a warning.
+	// Config patch is best-effort: Claude Code refreshes oauthAccount/userID from the token.
 	var cfgErr error
 	if patchCfg {
 		cfgErr = paths.WriteFileAtomic(paths.ConfigFile, []byte(newCfg), 0o600)

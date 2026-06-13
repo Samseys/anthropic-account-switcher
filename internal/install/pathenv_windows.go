@@ -21,7 +21,7 @@ import (
 var envKeyPath = `Environment`
 
 // getUserPath returns the raw (unexpanded) user PATH and its registry type.
-// A missing value is not an error; returns "" and EXPAND_SZ (Windows's default type).
+// A missing value returns "" and EXPAND_SZ (Windows's default).
 func getUserPath() (string, uint32, error) {
 	k, err := registry.OpenKey(registry.CURRENT_USER, envKeyPath, registry.QUERY_VALUE)
 	if err != nil {
@@ -72,7 +72,7 @@ func broadcastEnvChange() {
 		uintptr(unsafe.Pointer(param)), smtoAbortIfHung, 5000, 0)
 }
 
-// samePathEntry reports whether a PATH entry refers to dir (whitespace-insensitive).
+// samePathEntry compares a PATH entry to dir, whitespace-insensitive.
 func samePathEntry(entry, dir string) bool {
 	return entry != "" && paths.PathEqual(strings.TrimSpace(entry), dir)
 }

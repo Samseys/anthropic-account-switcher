@@ -9,8 +9,7 @@ import (
 	"strings"
 )
 
-// running scans processes for one mentioning "claude". Uses ps (not pgrep) for
-// full argv, so a node-hosted claude-code/cli.js is also matched.
+// running uses ps (not pgrep) for full argv, so node-hosted claude-code is also matched.
 func running() bool {
 	out, err := exec.Command("ps", "-A", "-ww", "-o", "pid=,args=").Output()
 	if err != nil {

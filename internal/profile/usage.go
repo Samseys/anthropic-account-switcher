@@ -9,11 +9,10 @@ import (
 	"github.com/Samseys/anthropic-account-switcher/internal/usage"
 )
 
-// noSensorData explains why usage is empty: the status-line sensor has not run.
 const noSensorData = "No usage recorded yet. Run 'acc-claude statusline --install', then let Claude\n" +
 	"Code emit at least one message."
 
-// humanReset renders a window's reset as "in 2h14m (07:00)", or "" for no window.
+// humanReset renders a window's reset as "in 2h14m (07:00)", or "" when nil.
 func humanReset(w *usage.Window) string {
 	if w == nil || w.ResetsAt.IsZero() {
 		return ""
@@ -25,8 +24,8 @@ func humanReset(w *usage.Window) string {
 	return fmt.Sprintf("in %s (%s)", roundDur(d), w.ResetsAt.Local().Format("15:04"))
 }
 
-// roundDur trims a duration to a friendly granularity (minutes under a day, else
-// whole hours) and drops trailing zero units.
+// roundDur formats d as a human string: minutes when under a day, else whole hours;
+// trailing zero units are dropped.
 func roundDur(d time.Duration) string {
 	if d >= 24*time.Hour {
 		return fmt.Sprintf("%dd%dh", int(d/(24*time.Hour)), int(d%(24*time.Hour)/time.Hour))
@@ -40,7 +39,7 @@ func roundDur(d time.Duration) string {
 	return fmt.Sprintf("%dh%dm", h, m)
 }
 
-// humanAgo renders how long ago t was, e.g. "3m ago".
+// humanAgo returns e.g. "3m ago" or "just now".
 func humanAgo(t time.Time) string {
 	d := time.Since(t)
 	if d < time.Minute {
@@ -49,7 +48,6 @@ func humanAgo(t time.Time) string {
 	return roundDur(d) + " ago"
 }
 
-// windowPct is a window's utilization, or 0 when there is no active window.
 func windowPct(w *usage.Window) float64 {
 	if w == nil {
 		return 0
@@ -167,7 +165,6 @@ func usageAll(asJSON bool) error {
 	return nil
 }
 
-// parseThreshold reads the optional threshold positional ("90" or "90%").
 func parseThreshold(arg string) (float64, error) {
 	if arg == "" {
 		return 0, nil // signals "use default"

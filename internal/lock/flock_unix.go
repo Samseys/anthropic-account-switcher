@@ -7,7 +7,6 @@ import (
 	"syscall"
 )
 
-// flockTry attempts a non-blocking exclusive flock on f.
 func flockTry(f *os.File) error {
 	err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if err == syscall.EWOULDBLOCK {

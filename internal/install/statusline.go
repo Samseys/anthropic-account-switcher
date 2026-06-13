@@ -15,20 +15,18 @@ import (
 // lives here and is attached to register/unregister. The status-line sensor
 // itself (reading stdin, recording usage) lives in internal/profile.
 
-// settingsStatusLine is the shape of the `statusLine` entry in settings.json.
 type settingsStatusLine struct {
 	Type    string `json:"type"`
 	Command string `json:"command"`
 	Padding int    `json:"padding,omitempty"`
 }
 
-// statuslineCommand is the command string written into settings.json. We use the
-// bare binary name (resolved via PATH, as register sets up) so the entry is
-// stable across upgrades and easy to recognize as ours.
+// statuslineCommand uses the bare binary name (resolved via PATH) so the entry
+// is stable across upgrades and easy to recognize as ours.
 func statuslineCommand() string { return paths.Bin + " statusline" }
 
-// isOurStatusLine reports whether an existing statusLine entry is one we wrote, so
-// we update/remove ours but never clobber a user's custom status line.
+// isOurStatusLine reports whether an existing statusLine entry is ours, so we
+// never clobber a user's custom status line.
 func isOurStatusLine(raw json.RawMessage) bool {
 	var sl settingsStatusLine
 	if err := json.Unmarshal(raw, &sl); err != nil {
@@ -90,9 +88,8 @@ func InstallStatusLine() (string, error) {
 	return fmt.Sprintf("Added the usage status line to %s (restart Claude Code to see it).\n", path), nil
 }
 
-// UninstallStatusLine removes the statusline entry we added, leaving a custom one
-// (and all other settings) untouched. It returns "" when there was nothing of
-// ours to remove.
+// UninstallStatusLine removes the statusline entry we added; leaves a custom
+// entry and all other settings untouched.
 func UninstallStatusLine() (string, error) {
 	path := paths.SettingsFile
 	raw, err := readSettings(path)

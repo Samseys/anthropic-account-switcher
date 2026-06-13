@@ -8,9 +8,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// running enumerates the process table via Toolhelp32 and checks image names.
-// A legacy node-hosted session is missed (no command-line access here), which
-// is acceptable for a best-effort warn-only check.
+// running uses Toolhelp32 image names; node-hosted sessions are missed
+// (no command-line access), acceptable for a warn-only check.
 func running() bool {
 	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {

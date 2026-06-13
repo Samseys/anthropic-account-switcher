@@ -5,7 +5,6 @@ import (
 	"github.com/Samseys/anthropic-account-switcher/internal/paths"
 )
 
-// Commands returns the register and unregister subcommands.
 func Commands() []*cli.Command {
 	return []*cli.Command{
 		{

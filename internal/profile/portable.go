@@ -24,14 +24,13 @@ const passEnv = "ACC_CLAUDE_PASSPHRASE"
 
 const bundleVersion = 1
 
-// exportBundle is the plaintext portable representation of one or more profiles
-// (also the inner payload of an encrypted bundle).
+// exportBundle is the plaintext bundle (and the inner payload of an encrypted one).
 type exportBundle struct {
 	Version  int             `json:"version"`
 	Profiles []exportProfile `json:"profiles"`
 }
 
-// exportProfile carries one profile; raw JSON fields round-trip verbatim into profile files.
+// exportProfile carries one profile. Raw JSON fields round-trip verbatim into profile files.
 type exportProfile struct {
 	Name         string          `json:"name"`
 	Email        string          `json:"email,omitempty"`
@@ -40,7 +39,7 @@ type exportProfile struct {
 	Credentials  json.RawMessage `json:"credentials"`
 }
 
-// sealed is the encrypted envelope: exportBundle JSON under AES-GCM with a
+// sealed is the encrypted envelope: AES-256-GCM over exportBundle JSON with a
 // PBKDF2-derived key. Salt, Nonce, Ciphertext marshal to base64.
 type sealed struct {
 	Encrypted  bool   `json:"encrypted"`
@@ -58,10 +57,9 @@ const (
 	keyLen  = 32 // AES-256
 )
 
-// Export writes one profile (or all of them, when all is set) to file as a
-// portable bundle. With encrypt the bundle is AES-GCM encrypted under a
-// passphrase; otherwise it is plaintext and a loud warning is printed. An empty
-// or "-" file writes to stdout.
+// Export writes one profile (or all, when all is set) to a portable bundle.
+// With encrypt, the bundle is AES-256-GCM encrypted under a passphrase;
+// otherwise it is plaintext with a warning. An empty or "-" file writes to stdout.
 func Export(name string, all bool, file string, encrypt bool) error {
 	var names []string
 	if all {
@@ -136,9 +134,9 @@ func Export(name string, all bool, file string, encrypt bool) error {
 	return nil
 }
 
-// Import restores profiles from a bundle written by Export. Encrypted bundles
-// are detected automatically and prompt for the passphrase. Existing profiles
-// of the same name are skipped unless overwrite is set.
+// Import restores profiles from an Export bundle. Encrypted bundles are detected
+// automatically and prompt for a passphrase. Same-name profiles are skipped
+// unless overwrite is set.
 func Import(file string, overwrite bool) error {
 	raw, err := os.ReadFile(file)
 	if err != nil {
@@ -168,9 +166,8 @@ func Import(file string, overwrite bool) error {
 			skipped++
 			continue
 		}
-		// One account, one profile — the invariant save enforces. If a profile
-		// under a *different* name already tracks this account, importing would
-		// create a duplicate, so skip it (--overwrite only covers name collisions).
+		// One account, one profile. Skip if a different-named profile already
+		// tracks this account (--overwrite only covers name collisions).
 		if id := claudejson.Field(string(p.OAuthAccount), "accountUuid"); id != "" {
 			if existing := profileForAccount(id); existing != "" && existing != name {
 				fmt.Printf("Skipping %q: this account is already saved as profile %q (remove or rename it first).\n", name, existing)
@@ -202,7 +199,6 @@ func Import(file string, overwrite bool) error {
 	return nil
 }
 
-// openBundle parses bundle bytes, decrypting transparently if needed.
 func openBundle(raw []byte) (exportBundle, error) {
 	var probe struct {
 		Encrypted bool `json:"encrypted"`
@@ -230,7 +226,7 @@ func openBundle(raw []byte) (exportBundle, error) {
 	return b, nil
 }
 
-// seal encrypts the bundle under a passphrase (AES-256-GCM, PBKDF2 key).
+// seal encrypts plain under a passphrase (AES-256-GCM, PBKDF2-SHA256 key).
 func seal(plain []byte, pass string) ([]byte, error) {
 	salt := make([]byte, saltLen)
 	if _, err := rand.Read(salt); err != nil {
@@ -291,9 +287,8 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-// readPassphrase reads from $ACC_CLAUDE_PASSPHRASE or prompts the user.
-// When confirm is true (export), it asks twice. Terminal input is echo-free;
-// piped stdin echoes whatever the pipe shows.
+// readPassphrase reads from $ACC_CLAUDE_PASSPHRASE or prompts the terminal
+// (echo-free). When confirm is true it asks twice (export path).
 func readPassphrase(confirm bool) (string, error) {
 	if v := os.Getenv(passEnv); v != "" {
 		return v, nil
@@ -306,7 +301,7 @@ func readPassphrase(confirm bool) (string, error) {
 		if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
 			var b []byte
 			b, err = term.ReadPassword(fd)
-			fmt.Fprintln(os.Stderr) // restore the newline ReadPassword consumed
+			fmt.Fprintln(os.Stderr) // ReadPassword suppresses the newline
 			line = string(b)
 		} else {
 			line, err = r.ReadString('\n')

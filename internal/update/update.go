@@ -149,7 +149,7 @@ func MaybeNotify() {
 }
 
 // refreshLatestIfStale re-queries the API at most once per updateCheckInterval.
-// A failed fetch writes nothing, so the throttle only advances on success.
+// A failed fetch writes nothing — the throttle only advances on success.
 func refreshLatestIfStale() {
 	c, _ := readUpdateCheck()
 	if time.Since(time.Unix(c.CheckedAt, 0)) <= updateCheckInterval {

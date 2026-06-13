@@ -2,12 +2,12 @@
 
 package store
 
-// On non-Windows platforms profile snapshots are stored as plain files (macOS
-// keeps the *live* credential in the Keychain, but snapshots are files there
-// too). These are identity functions so the call sites stay platform-agnostic.
+// On non-Windows, profile snapshots are plain files (macOS keeps the *live*
+// credential in the Keychain, but snapshots are files too). Identity functions
+// so call sites stay platform-agnostic.
 
-// ProtectCreds returns the at-rest form of a snapshot (plaintext here).
+// ProtectCreds is a no-op on non-Windows (plaintext snapshots).
 func ProtectCreds(data []byte) ([]byte, error) { return data, nil }
 
-// UnprotectCreds reverses ProtectCreds (plaintext here).
+// UnprotectCreds is a no-op on non-Windows (plaintext snapshots).
 func UnprotectCreds(data []byte) ([]byte, error) { return data, nil }

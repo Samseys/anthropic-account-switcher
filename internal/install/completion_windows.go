@@ -36,7 +36,7 @@ var powershellProfilePaths = func() []string {
 	return out
 }
 
-// completionScriptPath is a var so tests can redirect it away from the real install dir.
+// completionScriptPath is a var so tests can redirect it.
 var completionScriptPath = func() string {
 	return filepath.Join(installDir(), paths.Bin+".completion.ps1")
 }

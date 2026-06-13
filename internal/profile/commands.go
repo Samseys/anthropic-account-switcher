@@ -7,9 +7,8 @@ import (
 	"github.com/Samseys/anthropic-account-switcher/internal/install"
 )
 
-// Commands returns the account-profile subcommands, each declared next to the
-// handler it drives. main wires them in with app.Add(profile.Commands()...),
-// so the command surface lives with its implementation rather than in main.
+// Commands returns the account-profile subcommands. Each is declared next to
+// its handler so the command surface lives with its implementation.
 func Commands() []*cli.Command {
 	return []*cli.Command{
 		{
@@ -82,9 +81,8 @@ func Commands() []*cli.Command {
 				{Name: "--all", Desc: "Export every saved profile"},
 				{Name: "--passphrase", Desc: "Encrypt the bundle"},
 			},
-			// The flag changes what the positionals mean, so this is a CompleteFunc
-			// rather than a fixed Args list: with --all the lone positional is the
-			// bundle file; otherwise it is <profile> then the file.
+			// --all shifts the positionals (lone arg is the file, not the profile),
+			// so completion must branch on the flag rather than use a fixed Args list.
 			Complete: func(r cli.CompRequest) ([]string, bool) {
 				if r.Has("--all") {
 					return cli.Args(files)(r)
@@ -193,9 +191,7 @@ func Commands() []*cli.Command {
 	}
 }
 
-// profiles and files are this package's per-argument completers, used with
-// cli.Args. profiles reads the saved profile list fresh on each call, so
-// completion always reflects what is on disk; files defers to the shell's own
-// filename completion.
+// profiles reads the saved profile list fresh on each call so completion
+// reflects the current disk state; files defers to the shell's filename completion.
 func profiles() ([]string, bool) { return Names(), false }
 func files() ([]string, bool)    { return nil, true }

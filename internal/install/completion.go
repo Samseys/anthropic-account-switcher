@@ -12,8 +12,8 @@ import (
 // they don't interfere when both land in the same startup file.
 const completionMarker = "# " + paths.Bin + " completion"
 
-// appendMarkedBlock idempotently appends the completion marker and loader line
-// to file (creating parents as needed). Returns false if already present.
+// appendMarkedBlock appends the completion marker and loader line to file
+// (creating parents as needed), idempotent. Returns false if already present.
 func appendMarkedBlock(file, line string) (bool, error) {
 	if existing, ok := paths.ReadFileOpt(file); ok && strings.Contains(existing, completionMarker) {
 		return false, nil
@@ -32,9 +32,8 @@ func appendMarkedBlock(file, line string) (bool, error) {
 	return true, nil
 }
 
-// removeMarkedBlock removes the completion marker, the loader line after it,
-// and the blank separator before it. Missing file is a no-op. Splits on "\n"
-// (not "\r\n") so any "\r" on kept lines is preserved.
+// removeMarkedBlock strips our marked block from file. Missing file is a no-op.
+// Splits on "\n" not "\r\n", so any "\r" on kept lines is preserved.
 func removeMarkedBlock(file string) {
 	content, ok := paths.ReadFileOpt(file)
 	if !ok {

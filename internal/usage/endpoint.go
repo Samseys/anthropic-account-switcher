@@ -38,8 +38,8 @@ var (
 )
 
 // SetEndpointsForTest points the usage and token URLs at test servers and returns
-// a restore func. It exists only so packages that wrap Fetch/RefreshToken can
-// drive them against an httptest server; production code never calls it.
+// a restore func. Allows packages that wrap Fetch/RefreshToken to drive them
+// against an httptest server.
 func SetEndpointsForTest(usage, token string) func() {
 	oldUsage, oldToken := usageURL, tokenURL
 	usageURL, tokenURL = usage, token
@@ -56,17 +56,15 @@ const (
 	// on the "claude-code/" prefix + a valid semver, not the exact number.
 	defaultClaudeCodeVersion = "2.1.0"
 
-	// MinInterval is the floor between endpoint polls; the endpoint rate-limits
-	// hard, so callers cache at least this long per account.
+	// MinInterval is the floor between endpoint polls; callers must cache at
+	// least this long per account.
 	MinInterval = 90 * time.Second
 )
 
 var (
-	// ErrRateLimited is returned on HTTP 429 so callers can back off.
-	ErrRateLimited = errors.New("usage endpoint rate-limited (HTTP 429); back off")
+	ErrRateLimited     = errors.New("usage endpoint rate-limited (HTTP 429); back off")
 	// ErrUnauthorized is returned on 401/403 — usually a lapsed access token.
-	ErrUnauthorized = errors.New("usage request unauthorized (access token expired or invalid)")
-	// ErrRefreshRejected is returned when the refresh token is expired/revoked.
+	ErrUnauthorized    = errors.New("usage request unauthorized (access token expired or invalid)")
 	ErrRefreshRejected = errors.New("refresh token rejected; log in to this account again")
 )
 
@@ -77,11 +75,9 @@ func userAgent() string {
 	return "claude-code/" + defaultClaudeCodeVersion
 }
 
-// rateLimited wraps ErrRateLimited with the server's stated reset window, read
-// from the standard rate-limit headers, so callers can report (and back off
-// until) the actual retry time instead of guessing. Anthropic sends a unified
-// reset as an epoch second; a plain Retry-After (delta seconds or HTTP date) is
-// honored as a fallback.
+// rateLimited wraps ErrRateLimited with the server's reset window from standard
+// rate-limit headers. Anthropic sends a unified reset as an epoch second;
+// Retry-After (delta seconds or HTTP date) is honored as a fallback.
 func rateLimited(h http.Header) error {
 	if v := h.Get("Anthropic-Ratelimit-Unified-Reset"); v != "" {
 		if sec, err := strconv.ParseInt(v, 10, 64); err == nil {
@@ -105,7 +101,6 @@ func rateLimited(h http.Header) error {
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}
 
-// Fetch queries the usage endpoint with the given OAuth access token.
 func Fetch(ctx context.Context, accessToken string) (*Report, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, usageURL, nil)
 	if err != nil {
@@ -162,15 +157,12 @@ func parseEndpointReport(body []byte) (*Report, error) {
 	return &Report{FiveHour: raw.FiveHour.toWindow(), SevenDay: raw.SevenDay.toWindow()}, nil
 }
 
-// Token is the result of a successful refresh.
 type Token struct {
 	AccessToken  string
 	RefreshToken string    // the rotated token, or the original if unchanged
 	ExpiresAt    time.Time // zero if the server omitted expires_in
 }
 
-// RefreshToken exchanges a refresh token for a fresh access token at Anthropic's
-// OAuth token endpoint — the same exchange Claude Code performs.
 func RefreshToken(ctx context.Context, refreshToken string) (Token, error) {
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
@@ -230,7 +222,7 @@ func RefreshToken(ctx context.Context, refreshToken string) (Token, error) {
 	return tok, nil
 }
 
-// Credentials is the slice of .credentials.json the online path needs.
+// Credentials holds the OAuth tokens extracted from a credentials blob.
 type Credentials struct {
 	AccessToken  string
 	RefreshToken string

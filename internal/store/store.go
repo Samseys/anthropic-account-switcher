@@ -100,12 +100,10 @@ func securityQuote(s string) string {
 	return `"` + s + `"`
 }
 
-// WriteCreds stores data as the live Claude Code credentials.
 func WriteCreds(data []byte) error {
 	if useKeychain() {
-		// -U updates the item if it already exists. The command is fed via
-		// `security -i` stdin so the token never appears in the process
-		// argument list.
+		// -U updates the item if it already exists. Fed via stdin so the token
+		// never appears in the process argument list.
 		line := fmt.Sprintf("add-generic-password -U -a %s -s %s -w %s\n",
 			securityQuote(keychainAccount()), securityQuote(keychainService()), securityQuote(string(data)))
 		cmd := exec.Command("security", "-i")

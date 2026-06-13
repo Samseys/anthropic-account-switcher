@@ -7,12 +7,11 @@ package proc
 
 import "strings"
 
-// ClaudeRunning reports whether a Claude Code process appears to be running.
 func ClaudeRunning() bool {
 	return running()
 }
 
-// mentionsClaude reports whether s names Claude Code but not this tool itself.
+// mentionsClaude reports whether s names Claude Code but not acc-claude itself.
 func mentionsClaude(s string) bool {
 	s = strings.ToLower(s)
 	return strings.Contains(s, "claude") && !strings.Contains(s, "acc-claude")

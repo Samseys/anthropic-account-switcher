@@ -39,8 +39,7 @@ func unixTargets() []shellTarget {
 	}
 }
 
-// applicable reports whether to configure this shell: it's the current shell,
-// or its config file/dir already exists.
+// applicable reports whether to configure this shell.
 func (tg shellTarget) applicable(current string) bool {
 	if tg.name == current {
 		return true

@@ -16,10 +16,10 @@ import (
 
 const Bin = "acc-claude"
 
-// Version is overridden at build time via -ldflags "-X .../internal/paths.Version=...".
+// Version is set at build time via -ldflags.
 var Version string
 
-// VersionString returns the ldflags version, the module version from go install, or "dev".
+// VersionString returns the ldflags version, the module version, or "dev".
 func VersionString() string {
 	if Version != "" {
 		return Version
@@ -32,8 +32,7 @@ func VersionString() string {
 	return "dev"
 }
 
-// Vars (not consts) so tests can redirect them to a scratch directory.
-// Honors CLAUDE_CONFIG_DIR exactly as Claude Code does.
+// Vars (not consts) so tests can redirect them; honors CLAUDE_CONFIG_DIR.
 var (
 	Home         = mustHome()
 	ClaudeDir    = defaultClaudeDir()
@@ -75,7 +74,7 @@ var sanitizeRe = regexp.MustCompile(`[^a-zA-Z0-9._@-]`)
 // Sanitize maps an arbitrary profile name to a filesystem-safe form (idempotent).
 func Sanitize(s string) string { return sanitizeRe.ReplaceAllString(s, "_") }
 
-// ReadFileOpt returns ("", false) if the file is missing or unreadable.
+// ReadFileOpt returns the file contents, or ("", false) on any read error.
 func ReadFileOpt(path string) (string, bool) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -84,7 +83,7 @@ func ReadFileOpt(path string) (string, bool) {
 	return string(b), true
 }
 
-// ReadTrim returns the file's contents with surrounding whitespace trimmed, or "".
+// ReadTrim returns file contents with surrounding whitespace trimmed, or "".
 func ReadTrim(path string) string {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -114,10 +113,9 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	return renameWithRetry(tmpName, path)
 }
 
-// renameWithRetry retries the rename under capped exponential backoff.
-// On Windows, AV scanners briefly hold a handle on freshly written files,
-// causing ERROR_ACCESS_DENIED; a few seconds is enough for JSON/text files.
-// On Unix the first attempt always succeeds.
+// renameWithRetry retries under capped exponential backoff.
+// Windows AV scanners briefly hold handles on freshly written files
+// (ERROR_ACCESS_DENIED); a few seconds covers JSON/text files.
 func renameWithRetry(oldpath, newpath string) error {
 	const deadlineAfter = 5 * time.Second
 	deadline := time.Now().Add(deadlineAfter)
@@ -134,7 +132,7 @@ func renameWithRetry(oldpath, newpath string) error {
 	}
 }
 
-// SelfPath returns the absolute path of the running binary with symlinks resolved.
+// SelfPath returns the running binary's absolute path with symlinks resolved.
 func SelfPath() (string, error) {
 	self, err := os.Executable()
 	if err != nil {
