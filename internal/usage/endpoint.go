@@ -62,7 +62,7 @@ const (
 )
 
 var (
-	ErrRateLimited     = errors.New("usage endpoint rate-limited (HTTP 429); back off")
+	ErrRateLimited = errors.New("usage endpoint rate-limited (HTTP 429); back off")
 	// ErrUnauthorized is returned on 401/403 — usually a lapsed access token.
 	ErrUnauthorized    = errors.New("usage request unauthorized (access token expired or invalid)")
 	ErrRefreshRejected = errors.New("refresh token rejected; log in to this account again")
