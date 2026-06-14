@@ -176,55 +176,103 @@ const (
 // function so the CLI↔panel handoff is unit-testable. Trusts the sensor only
 // while it is actively writing (within sensorQuietWindow); falls back to polling
 // the endpoint when the sensor goes quiet (e.g. switched to the VSCode panel).
+// onlineBackoff suppresses the online poll until a 429 reset window has passed.
 // once forces a single evaluation regardless of cadence.
-func decideWatchAction(snap usageSnapshot, ok bool, active string, now, lastSeen, lastOnline time.Time, claudeRunning, once bool) watchAction {
+func decideWatchAction(snap usageSnapshot, ok bool, active string, now, lastSeen, lastOnline, onlineBackoff time.Time, claudeRunning, once bool) watchAction {
 	sensorRecent := ok && !snap.Online && snap.Account == active && now.Sub(snap.UpdatedAt) <= sensorQuietWindow
+	pollDue := now.Sub(lastOnline) >= endpointPollInterval && now.After(onlineBackoff)
 	switch {
 	case sensorRecent && (once || snap.UpdatedAt.After(lastSeen)):
 		return actSnapshot
-	case !sensorRecent && (once || (claudeRunning && now.Sub(lastOnline) >= endpointPollInterval)):
+	case !sensorRecent && (once || (claudeRunning && pollDue)):
 		return actOnline
 	default:
 		return actNone
 	}
 }
 
-// AutoSwitchOptions configures the auto-switcher.
-type AutoSwitchOptions struct {
-	Threshold float64 // percent (0–100) at which to switch; default 90
-	Week      bool    // also trip on the 7-day window, not just the 5-hour
-	Once      bool    // check once and return instead of looping
-	DryRun    bool    // report the decision but do not switch
+// tripThresholds is the per-window utilization (0–100) at which autoswitch trips.
+// The sensor matches what Claude Code shows, so it trips at the ceiling; the
+// endpoint is coarser and polled, so it leaves more headroom (most on 5h).
+type tripThresholds struct {
+	fiveHour float64
+	sevenDay float64
 }
 
-// AutoSwitch watches the active account's usage and switches to the profile with
-// the most headroom when Threshold is crossed. Prefers the local sensor reading;
-// falls back to polling Anthropic's endpoint when the sensor is quiet (e.g. VSCode
-// panel). Candidates are always ranked by current endpoint usage. Loops until
-// interrupted unless Once is set.
-func AutoSwitch(opts AutoSwitchOptions) error {
-	if opts.Threshold <= 0 {
-		opts.Threshold = 90
+var (
+	sensorThresholds = tripThresholds{fiveHour: 99, sevenDay: 99}
+	onlineThresholds = tripThresholds{fiveHour: 95, sevenDay: 98}
+)
+
+// trigger reports the window that tripped (5h wins ties) and its utilization,
+// or ok=false when neither is at its threshold.
+func (t tripThresholds) trigger(five, seven float64) (window string, pct float64, ok bool) {
+	switch {
+	case five >= t.fiveHour:
+		return "5h usage", five, true
+	case seven >= t.sevenDay:
+		return "7d usage", seven, true
+	default:
+		return "", 0, false
 	}
+}
+
+func (t tripThresholds) describe() string {
+	if t.fiveHour == t.sevenDay {
+		return fmt.Sprintf("%.0f%%", t.fiveHour)
+	}
+	return fmt.Sprintf("%.0f%% 5h / %.0f%% 7d", t.fiveHour, t.sevenDay)
+}
+
+// AutoSwitchOptions configures the auto-switcher.
+type AutoSwitchOptions struct {
+	FiveHour float64 // when > 0, overrides the 5h trip threshold for both sources
+	SevenDay float64 // when > 0, overrides the 7d trip threshold for both sources
+	Once     bool    // check once and return instead of looping
+	DryRun   bool    // report the decision but do not switch
+}
+
+// sensor/online resolve each source's thresholds, applying any per-window
+// override (which spans both sources) on top of the source's defaults.
+func (opts AutoSwitchOptions) sensor() tripThresholds { return opts.resolve(sensorThresholds) }
+func (opts AutoSwitchOptions) online() tripThresholds { return opts.resolve(onlineThresholds) }
+func (opts AutoSwitchOptions) resolve(def tripThresholds) tripThresholds {
+	if opts.FiveHour > 0 {
+		def.fiveHour = opts.FiveHour
+	}
+	if opts.SevenDay > 0 {
+		def.sevenDay = opts.SevenDay
+	}
+	return def
+}
+
+// AutoSwitch watches the active account and switches to the profile with the most
+// headroom when either window crosses its trip threshold. Prefers the local sensor
+// reading; falls back to polling the endpoint when the sensor is quiet (e.g. the
+// VSCode panel), at more conservative thresholds. Candidates are always ranked by
+// current endpoint usage. Loops until interrupted unless Once is set.
+func AutoSwitch(opts AutoSwitchOptions) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
 	if !opts.Once {
-		fmt.Printf("Watching usage; switching at %.0f%% (%s window). Ctrl-C to stop.\n",
-			opts.Threshold, windowLabel(opts.Week))
+		fmt.Printf("Watching usage; switching at %s (sensor) / %s (endpoint). Ctrl-C to stop.\n",
+			opts.sensor().describe(), opts.online().describe())
 	}
 	// In-place on a terminal; one line per poll when redirected or --once.
 	sw := newStatusWriter(!opts.Once && stdoutIsTerminal())
-	var lastSeen, lastOnline time.Time
+	var lastSeen, lastOnline, onlineBackoff time.Time
 	for {
 		snap, ok := readUsageState()
-		switch decideWatchAction(snap, ok, activeProfile(), time.Now(), lastSeen, lastOnline, proc.ClaudeRunning(), opts.Once) {
+		switch decideWatchAction(snap, ok, activeProfile(), time.Now(), lastSeen, lastOnline, onlineBackoff, proc.ClaudeRunning(), opts.Once) {
 		case actSnapshot:
 			lastSeen = snap.UpdatedAt
 			evaluateSnapshot(ctx, opts, sw, snap)
 		case actOnline:
 			lastOnline = time.Now()
-			evaluateOnline(ctx, opts, sw)
+			if backoff := evaluateOnline(ctx, opts, sw); backoff > 0 {
+				onlineBackoff = time.Now().Add(backoff)
+			}
 		}
 		if opts.Once {
 			return nil
@@ -239,38 +287,33 @@ func AutoSwitch(opts AutoSwitchOptions) error {
 	}
 }
 
-func windowLabel(week bool) string {
-	if week {
-		return "5h or 7d"
-	}
-	return "5h"
-}
-
 // evaluateSnapshot logs and switches on a fresh sensor reading. The caller has
 // already verified the snapshot is current and for the still-active account.
 func evaluateSnapshot(ctx context.Context, opts AutoSwitchOptions, sw *statusWriter, snap usageSnapshot) {
 	sw.update(watchLine(snap.UpdatedAt, snap.Account, snap.FiveHour, snap.SevenDay, false))
-	tripAndSwitch(ctx, opts, sw, snap.Account, windowPct(snap.FiveHour), windowPct(snap.SevenDay))
+	tripAndSwitch(ctx, opts, sw, snap.Account, windowPct(snap.FiveHour), windowPct(snap.SevenDay), opts.sensor())
 }
 
-// tripAndSwitch switches when usage crosses the threshold, picking the candidate
-// with the most headroom ranked from current endpoint usage. commits the live
-// line first so its messages land on their own row.
-func tripAndSwitch(ctx context.Context, opts AutoSwitchOptions, sw *statusWriter, active string, five, seven float64) {
-	if !(five >= opts.Threshold || (opts.Week && seven >= opts.Threshold)) {
+// tripAndSwitch switches when either window crosses th, picking the candidate with
+// the most headroom from current endpoint usage. Candidates are polled online, so
+// they rank by the online 5h threshold regardless of which source tripped. Commits
+// the live line first so its messages land on their own row.
+func tripAndSwitch(ctx context.Context, opts AutoSwitchOptions, sw *statusWriter, active string, five, seven float64, th tripThresholds) {
+	window, pct, ok := th.trigger(five, seven)
+	if !ok {
 		return
 	}
 	sw.commit()
-	target, reason, err := chooseTargetOnline(ctx, active, opts.Threshold)
+	target, reason, err := chooseTargetOnline(ctx, active, opts.online().fiveHour)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  threshold reached but cannot switch: %v\n", err)
+		fmt.Fprintf(os.Stderr, "  %s at %.0f%% but cannot switch: %v\n", window, pct, err)
 		return
 	}
 	if opts.DryRun {
-		fmt.Printf("  threshold reached (%.0f%%); would switch to %q (%s) [dry-run]\n", five, target, reason)
+		fmt.Printf("  %s reached %.0f%%; would switch to %q (%s) [dry-run]\n", window, pct, target, reason)
 		return
 	}
-	fmt.Printf("  threshold reached (%.0f%%); switching to %q (%s)\n", five, target, reason)
+	fmt.Printf("  %s reached %.0f%%; switching to %q (%s)\n", window, pct, target, reason)
 	if err := Switch(target); err != nil {
 		fmt.Fprintf(os.Stderr, "  switching to %q: %v\n", target, err)
 	}

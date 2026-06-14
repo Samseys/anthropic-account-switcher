@@ -28,7 +28,23 @@ const (
 	// tokenRefreshSkew refreshes a candidate's access token this far before its
 	// stated expiry, so a poll never races the expiry boundary.
 	tokenRefreshSkew = 60 * time.Second
+	// defaultRateLimitBackoff suspends online polling after a 429 with no reset
+	// hint, so we don't re-hammer an already rate-limited bucket.
+	defaultRateLimitBackoff = 5 * time.Minute
 )
+
+// rateLimitBackoff reports how long to suspend online polling after err: the
+// server's reset window, a default floor when a 429 gave no hint, or 0 for a
+// non-rate-limit error.
+func rateLimitBackoff(err error) time.Duration {
+	if !errors.Is(err, usage.ErrRateLimited) {
+		return 0
+	}
+	if d := usage.RetryAfter(err); d > 0 {
+		return d
+	}
+	return defaultRateLimitBackoff
+}
 
 // fetchActiveOnline reads the live account's usage from the endpoint. Never
 // refreshes or rewrites live credentials — Claude Code owns that token — so on
@@ -178,25 +194,27 @@ func refreshActiveUsageIfStale(force bool) {
 
 // evaluateOnline polls the active account's usage, records it, and switches if it
 // trips the threshold. Fallback for when the sensor has no fresh reading (e.g.
-// the VSCode panel, which never runs status-line commands).
-func evaluateOnline(ctx context.Context, opts AutoSwitchOptions, sw *statusWriter) {
+// the VSCode panel, which never runs status-line commands). Returns the rate-limit
+// reset window on a 429 so the caller backs off until then.
+func evaluateOnline(ctx context.Context, opts AutoSwitchOptions, sw *statusWriter) time.Duration {
 	active := activeProfile()
 	if active == "" {
 		if opts.Once {
 			fmt.Println("No saved profile matches the active account; nothing to watch.")
 		}
-		return
+		return 0
 	}
 	rep, err := fetchActiveOnline(ctx)
 	if err != nil {
 		sw.commit()
 		fmt.Fprintf(os.Stderr, "  cannot read active-account usage from the API: %v\n", err)
-		return
+		return rateLimitBackoff(err)
 	}
 	recordUsage(usageSnapshot{Account: active, FiveHour: rep.FiveHour, SevenDay: rep.SevenDay, UpdatedAt: time.Now(), Online: true})
 
 	sw.update(watchLine(time.Now(), active, rep.FiveHour, rep.SevenDay, true))
-	tripAndSwitch(ctx, opts, sw, active, windowPct(rep.FiveHour), windowPct(rep.SevenDay))
+	tripAndSwitch(ctx, opts, sw, active, windowPct(rep.FiveHour), windowPct(rep.SevenDay), opts.online())
+	return 0
 }
 
 // chooseTargetOnline ranks candidates by current endpoint usage, polling each

@@ -177,6 +177,24 @@ func parseThreshold(arg string) (float64, error) {
 	return v, nil
 }
 
+// parseThresholds reads the optional positional overrides: none keeps the source
+// defaults, one value covers both windows, two set 5h then 7d. A returned 0 means
+// "use the default"; an override applies to both sources.
+func parseThresholds(five, seven string) (fiveHour, sevenDay float64, err error) {
+	f, err := parseThreshold(five)
+	if err != nil {
+		return 0, 0, err
+	}
+	if seven == "" {
+		return f, f, nil // one value (or none) applies to both windows
+	}
+	s, err := parseThreshold(seven)
+	if err != nil {
+		return 0, 0, err
+	}
+	return f, s, nil
+}
+
 func trimPercent(s string) string {
 	if n := len(s); n > 0 && s[n-1] == '%' {
 		return s[:n-1]

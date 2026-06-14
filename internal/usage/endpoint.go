@@ -68,6 +68,29 @@ var (
 	ErrRefreshRejected = errors.New("refresh token rejected; log in to this account again")
 )
 
+// RateLimitError reports a 429 and carries the server's reset window (0 if it gave
+// no hint) so callers can back off until then. errors.Is(err, ErrRateLimited) matches it.
+type RateLimitError struct{ RetryAfter time.Duration }
+
+func (e *RateLimitError) Error() string {
+	if e.RetryAfter > 0 {
+		return fmt.Sprintf("%s (retry after %s)", ErrRateLimited.Error(), e.RetryAfter.Round(time.Second))
+	}
+	return ErrRateLimited.Error()
+}
+
+func (e *RateLimitError) Unwrap() error { return ErrRateLimited }
+
+// RetryAfter returns the rate-limit reset window if err is (or wraps) a
+// RateLimitError, else 0.
+func RetryAfter(err error) time.Duration {
+	var rl *RateLimitError
+	if errors.As(err, &rl) {
+		return rl.RetryAfter
+	}
+	return 0
+}
+
 func userAgent() string {
 	if v := os.Getenv("ACC_CLAUDE_USER_AGENT"); v != "" {
 		return v
@@ -75,28 +98,28 @@ func userAgent() string {
 	return "claude-code/" + defaultClaudeCodeVersion
 }
 
-// rateLimited wraps ErrRateLimited with the server's reset window from standard
-// rate-limit headers. Anthropic sends a unified reset as an epoch second;
+// rateLimited builds a RateLimitError carrying the server's reset window from
+// standard rate-limit headers. Anthropic sends a unified reset as an epoch second;
 // Retry-After (delta seconds or HTTP date) is honored as a fallback.
 func rateLimited(h http.Header) error {
 	if v := h.Get("Anthropic-Ratelimit-Unified-Reset"); v != "" {
 		if sec, err := strconv.ParseInt(v, 10, 64); err == nil {
 			if d := time.Until(time.Unix(sec, 0)); d > 0 {
-				return fmt.Errorf("%w (resets in ~%s)", ErrRateLimited, d.Round(time.Second))
+				return &RateLimitError{RetryAfter: d}
 			}
 		}
 	}
 	if v := h.Get("Retry-After"); v != "" {
 		if sec, err := strconv.Atoi(v); err == nil {
-			return fmt.Errorf("%w (retry after %ds)", ErrRateLimited, sec)
+			return &RateLimitError{RetryAfter: time.Duration(sec) * time.Second}
 		}
 		if t, err := http.ParseTime(v); err == nil {
 			if d := time.Until(t); d > 0 {
-				return fmt.Errorf("%w (retry after ~%s)", ErrRateLimited, d.Round(time.Second))
+				return &RateLimitError{RetryAfter: d}
 			}
 		}
 	}
-	return ErrRateLimited
+	return &RateLimitError{}
 }
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}

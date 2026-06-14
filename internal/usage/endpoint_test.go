@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -59,7 +60,7 @@ func TestFetchStatusErrors(t *testing.T) {
 		_, err := Fetch(context.Background(), "tok")
 		usageURL = old
 		srv.Close()
-		if err != tc.want {
+		if !errors.Is(err, tc.want) {
 			t.Errorf("HTTP %d → %v, want %v", tc.code, err, tc.want)
 		}
 	}

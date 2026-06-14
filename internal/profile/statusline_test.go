@@ -22,6 +22,7 @@ func TestDecideWatchAction(t *testing.T) {
 		ok            bool
 		lastSeen      time.Time
 		lastOnline    time.Time
+		onlineBackoff time.Time
 		claudeRunning bool
 		once          bool
 		want          watchAction
@@ -52,6 +53,12 @@ func TestDecideWatchAction(t *testing.T) {
 			name: "sensor quiet, claude running, but polled too recently -> none",
 			snap: snap(active, 5*time.Minute), ok: true,
 			lastOnline: now.Add(-30 * time.Second), claudeRunning: true, want: actNone,
+		},
+		{
+			name: "poll due but within a 429 backoff window -> none",
+			snap: snap(active, 5*time.Minute), ok: true,
+			lastOnline: now.Add(-2 * time.Minute), onlineBackoff: now.Add(2 * time.Minute),
+			claudeRunning: true, want: actNone,
 		},
 		{
 			name: "reading is for a different account -> treated as quiet -> online",
@@ -89,9 +96,40 @@ func TestDecideWatchAction(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := decideWatchAction(tc.snap, tc.ok, active, now, tc.lastSeen, tc.lastOnline, tc.claudeRunning, tc.once)
+			got := decideWatchAction(tc.snap, tc.ok, active, now, tc.lastSeen, tc.lastOnline, tc.onlineBackoff, tc.claudeRunning, tc.once)
 			if got != tc.want {
 				t.Errorf("decideWatchAction = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestThresholdOverrides covers how the positional thresholds map onto each
+// source: none keeps the per-source defaults, one value covers both windows, two
+// set 5h then 7d — and an override always spans both sources.
+func TestThresholdOverrides(t *testing.T) {
+	cases := []struct {
+		name                           string
+		a, b                           string
+		wantS5, wantS7, wantO5, wantO7 float64
+	}{
+		{"defaults", "", "", 99, 99, 95, 98},
+		{"one value both windows", "75", "", 75, 75, 75, 75},
+		{"two values split windows", "90", "96", 90, 96, 90, 96},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			five, seven, err := parseThresholds(tc.a, tc.b)
+			if err != nil {
+				t.Fatalf("parseThresholds(%q,%q): %v", tc.a, tc.b, err)
+			}
+			opts := AutoSwitchOptions{FiveHour: five, SevenDay: seven}
+			s, o := opts.sensor(), opts.online()
+			if s.fiveHour != tc.wantS5 || s.sevenDay != tc.wantS7 {
+				t.Errorf("sensor = %v/%v, want %v/%v", s.fiveHour, s.sevenDay, tc.wantS5, tc.wantS7)
+			}
+			if o.fiveHour != tc.wantO5 || o.sevenDay != tc.wantO7 {
+				t.Errorf("online = %v/%v, want %v/%v", o.fiveHour, o.sevenDay, tc.wantO5, tc.wantO7)
 			}
 		})
 	}

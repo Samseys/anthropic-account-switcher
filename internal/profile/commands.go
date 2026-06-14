@@ -14,22 +14,19 @@ func Commands() []*cli.Command {
 		{
 			Name: "save", Usage: "[name]",
 			Summary: "Save the current account as a profile",
-			Details: "Snapshot the live Claude Code account (its OAuth credentials and cached\n" +
-				"identity) into a named profile. With no name, defaults to the account's\n" +
-				"email. If this account is already saved, updates that profile in place\n" +
-				"instead of creating a duplicate.",
+			Details: "Snapshot the live account's OAuth credentials and cached identity into a\n" +
+				"named profile. Defaults to the account's email; updates the existing\n" +
+				"profile in place if this account is already saved.",
 			Run: func(c cli.Ctx) error { return Save(c.Arg(0)) },
 		},
 		{
 			Name: "list", Aliases: []string{"ls"}, Usage: "[--json] [--refresh]",
 			Summary: "List saved profiles",
-			Details: "List every saved profile with its email and when it was saved; * marks the\n" +
-				"currently active account. A profile whose usage is stale or whose access\n" +
-				"token has expired is refreshed automatically from Anthropic's usage endpoint,\n" +
-				"reusing the existing access token when it is still valid and only renewing it\n" +
-				"when it has (nearly) expired. The active account's token is left to Claude\n" +
-				"Code, so it alone can still show [token expired].\n\n" +
-				"--refresh forces a live usage poll of every account regardless of staleness.",
+			Details: "List every saved profile with its email and save time; * marks the active\n" +
+				"account. Stale or token-expired profiles are refreshed from Anthropic's\n" +
+				"usage endpoint, reusing a still-valid token. The active account's token is\n" +
+				"left to Claude Code, so only it can show [token expired].\n\n" +
+				"--refresh forces a live usage poll of every account.",
 			Flags: []cli.Flag{
 				{Name: "--json", Desc: "Machine-readable output"},
 				{Name: "--refresh", Desc: "Poll the usage endpoint for current usage"},
@@ -39,10 +36,10 @@ func Commands() []*cli.Command {
 		{
 			Name: "switch", Aliases: []string{"use"}, Usage: "[name|-]",
 			Summary: "Switch to a profile",
-			Details: "Restore a profile's credentials and cached identity, making it the active\n" +
-				"account. Pass '-' to return to the previously active profile, or no name to\n" +
-				"toggle between exactly two saved profiles. The account you are leaving is\n" +
-				"re-saved first so its rotated tokens stay fresh.",
+			Details: "Restore a profile's credentials and identity, making it active. Pass '-' to\n" +
+				"return to the previous profile, or no name to toggle between two saved\n" +
+				"profiles. The account you leave is re-saved first to keep its rotated\n" +
+				"tokens fresh.",
 			Complete: cli.Args(profiles),
 			Run:      func(c cli.Ctx) error { return Switch(c.Arg(0)) },
 		},
@@ -73,10 +70,9 @@ func Commands() []*cli.Command {
 		{
 			Name: "export", Usage: "<name|--all> [file] [--passphrase]",
 			Summary: "Export profiles to a portable bundle",
-			Details: "Export one profile (or every profile with --all) to a portable bundle,\n" +
-				"written to a file or to stdout when no file is given. The bundle is\n" +
-				"plaintext unless --passphrase is set, which encrypts it so it can be moved\n" +
-				"safely between machines.",
+			Details: "Export one profile (or all with --all) to a portable bundle, written to a\n" +
+				"file or stdout. Plaintext unless --passphrase encrypts it for safe\n" +
+				"transfer between machines.",
 			Flags: []cli.Flag{
 				{Name: "--all", Desc: "Export every saved profile"},
 				{Name: "--passphrase", Desc: "Encrypt the bundle"},
@@ -99,9 +95,9 @@ func Commands() []*cli.Command {
 		{
 			Name: "import", Usage: "<file> [--overwrite]",
 			Summary: "Import profiles from a bundle",
-			Details: "Import profiles from a bundle produced by 'export'. Existing profiles are\n" +
-				"kept untouched unless --overwrite is set, which replaces those whose names\n" +
-				"collide. You are prompted for the passphrase if the bundle is encrypted.",
+			Details: "Import profiles from an 'export' bundle. Existing profiles are kept unless\n" +
+				"--overwrite replaces name collisions. Prompts for the passphrase if the\n" +
+				"bundle is encrypted.",
 			Flags:    []cli.Flag{{Name: "--overwrite", Desc: "Replace existing profiles"}},
 			Complete: cli.Args(files), // the bundle file
 			Run:      func(c cli.Ctx) error { return Import(c.Arg(0), c.Has("--overwrite")) },
@@ -110,9 +106,9 @@ func Commands() []*cli.Command {
 			Name: "usage", Usage: "[--all] [--json]",
 			Summary: "Show the last recorded rate-limit usage",
 			Details: "Show how much of the 5-hour and 7-day rate-limit windows the active account\n" +
-				"has consumed, as last recorded by the 'statusline' sensor (no network\n" +
-				"call). With --all, report every saved profile from its cached reading. Empty\n" +
-				"until the statusline command has run at least once — see 'help statusline'.",
+				"has used, as last recorded by the 'statusline' sensor (no network call).\n" +
+				"With --all, report every profile from its cached reading. Empty until\n" +
+				"'statusline' has run once — see 'help statusline'.",
 			Flags: []cli.Flag{
 				{Name: "--all", Desc: "Report every saved profile"},
 				{Name: "--json", Desc: "Machine-readable output"},
@@ -120,33 +116,32 @@ func Commands() []*cli.Command {
 			Run: func(c cli.Ctx) error { return Usage(c.Has("--json"), c.Has("--all")) },
 		},
 		{
-			Name: "autoswitch", Aliases: []string{"watch"}, Usage: "[threshold] [--week] [--once] [--dry-run]",
+			Name: "autoswitch", Aliases: []string{"watch"}, Usage: "[5h% [7d%]] [--once] [--dry-run]",
 			Summary: "Auto-switch accounts when usage hits a threshold",
-			Details: "Watch the active account's usage and, when its 5-hour window crosses the\n" +
-				"threshold (default 90%), switch to the saved profile with the most headroom.\n" +
-				"It prefers the reading the 'statusline' sensor records locally (free, never\n" +
-				"rate-limited; see 'help statusline') and falls back to Anthropic's usage\n" +
-				"endpoint when no fresh sensor data is available — e.g. the VSCode panel,\n" +
-				"which never runs status-line commands. Candidate accounts are always ranked\n" +
-				"by their current endpoint usage, since inactive accounts never run the sensor.\n\n" +
-				"--week also trips on the 7-day window; --once checks a single time and\n" +
-				"exits (for cron); --dry-run reports the decision without switching. The\n" +
-				"threshold is an optional positional ('autoswitch 85').",
+			Details: "Watch the active account and, when its 5-hour or 7-day window crosses a trip\n" +
+				"threshold, switch to the profile with the most headroom. The local\n" +
+				"'statusline' sensor is precise so it trips at 99%; the polled usage endpoint\n" +
+				"is coarser, tripping at 95% (5h) / 98% (7d). The endpoint is the fallback\n" +
+				"when no fresh sensor data exists (e.g. the VSCode panel). Candidates are\n" +
+				"always ranked by current endpoint usage, since inactive accounts never run\n" +
+				"the sensor.\n\n" +
+				"--once checks once then exits (for cron); --dry-run reports without\n" +
+				"switching. Positional thresholds override the defaults: one value covers\n" +
+				"both windows ('autoswitch 85'), two set 5h then 7d ('autoswitch 90 96').",
 			Flags: []cli.Flag{
-				{Name: "--week", Desc: "Also switch on the 7-day window"},
-				{Name: "--once", Desc: "Check once and exit"},
+				{Name: "--once", Desc: "Check once (switch if tripped) and exit"},
 				{Name: "--dry-run", Desc: "Report the decision without switching"},
 			},
 			Run: func(c cli.Ctx) error {
-				threshold, err := parseThreshold(c.Arg(0))
+				five, seven, err := parseThresholds(c.Arg(0), c.Arg(1))
 				if err != nil {
 					return err
 				}
 				return AutoSwitch(AutoSwitchOptions{
-					Threshold: threshold,
-					Week:      c.Has("--week"),
-					Once:      c.Has("--once"),
-					DryRun:    c.Has("--dry-run"),
+					FiveHour: five,
+					SevenDay: seven,
+					Once:     c.Has("--once"),
+					DryRun:   c.Has("--dry-run"),
 				})
 			},
 		},
@@ -157,9 +152,9 @@ func Commands() []*cli.Command {
 				"  --install     add it to ~/.claude/settings.json (preserves other settings;\n" +
 				"                won't overwrite a custom status line)\n" +
 				"  --uninstall   remove it again\n\n" +
-				"With no flags it is the sensor itself: Claude Code pipes its session JSON on\n" +
-				"stdin, and it prints the status-bar line and records the active account's\n" +
-				"usage locally. You normally never run this form by hand.",
+				"With no flags it is the sensor: Claude Code pipes session JSON on stdin, it\n" +
+				"prints the status-bar line and records the active account's usage locally.\n" +
+				"You normally never run this form by hand.",
 			Flags: []cli.Flag{
 				{Name: "--install", Desc: "Add the status line to settings.json"},
 				{Name: "--uninstall", Desc: "Remove the status line from settings.json"},

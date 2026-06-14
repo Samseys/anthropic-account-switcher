@@ -18,8 +18,7 @@ func Commands() []*cli.Command {
 			Name: "unregister", Aliases: []string{"uninstall"},
 			Summary: "Remove it from your PATH",
 			Details: "Undo 'register': take '" + paths.Bin + "' off your PATH and remove the\n" +
-				"completion setup. Saved profiles are kept unless you add --purge, which also\n" +
-				"deletes every stored profile.",
+				"completion setup. Saved profiles are kept unless --purge also deletes them.",
 			Flags: []cli.Flag{{Name: "--purge", Desc: "Also delete saved profiles"}},
 			Run:   func(c cli.Ctx) error { return Unregister(c.Has("--purge")) },
 		},
